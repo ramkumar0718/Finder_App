@@ -1,0 +1,60 @@
+# General
+.DS_Store
+.idea/
+.vscode/
+
+# IntelliJ
+*.iml
+*.ipr
+*.iws
+map.txt
+prompt.txt
+*.class
+*.log
+*.pyc
+*.swp
+.atom/
+.buildlog/
+.history
+.svn/
+.swiftpm/
+migrate_working_dir/
+
+
+# Backend (Python / Django)
+finder_app_be/__pycache__/
+finder_app_be/*.py[cod]
+finder_app_be/*$py.class
+finder_app_be/myenv/
+finder_app_be/venv/
+finder_app_be/env/
+finder_app_be/db.sqlite3
+finder_app_be/.env
+finder_app_be/media/
+finder_app_be/firebase-adminsdk-key.json
+finder_app_be/.pytest_cache/
+
+# Frontend (Flutter)
+finder_app_fe/.dart_tool/
+finder_app_fe/.flutter-plugins
+finder_app_fe/.flutter-plugins-dependencies
+finder_app_fe/build/
+finder_app_fe/ios/Flutter/Generated.xcconfig
+finder_app_fe/ios/Flutter/flutter_export_environment.sh
+finder_app_fe/android/.gradle
+finder_app_fe/android/local.properties
+finder_app_fe/ios/.generated/
+**/doc/api/
+**/ios/Flutter/.last_build_id
+.pub-cache/
+.pub/
+app.*.symbols
+app.*.map.json
+finder_app_fe/android/app/debug
+finder_app_fe/android/app/profile
+
+
+# Firebase Config Files
+finder_app_fe/android/app/google-services.json
+finder_app_fe/ios/Runner/GoogleService-Info.plist
+finder_app_fe/lib/firebase_options.dart
