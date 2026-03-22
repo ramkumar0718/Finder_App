@@ -8,6 +8,7 @@ import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import '../models/chat_model.dart';
 
 class ApiService {
@@ -16,8 +17,10 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal();
 
-  static const String baseDomain = 'http://10.0.2.2:8000';
-  static const String _baseUrl = '$baseDomain/api';
+  static String get baseDomain =>
+      dotenv.env['BASE_DOMAIN'] ?? 'No base url found';
+  // static const baseDomain = 'http://10.0.2.2:8000';
+  static String get _baseUrl => '$baseDomain/api';
   final fb_auth_lib.FirebaseAuth _auth = fb_auth_lib.FirebaseAuth.instance;
 
   // --- Helper Methods ---

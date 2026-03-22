@@ -79,7 +79,7 @@ class _IssueDetailsScreenState extends State<IssueDetailsScreen> {
 
     final cleanPath = url.startsWith('/') ? url : '/$url';
 
-    const baseUrl = ApiService.baseDomain;
+    final baseUrl = ApiService.baseDomain;
     return '$baseUrl$cleanPath';
   }
 

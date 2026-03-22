@@ -20,6 +20,10 @@ from .serializers import (
 )
 from .utils import generate_otp, send_otp_email
 
+class MyApiView(APIView):
+    def get(self, request):
+        return Response({"message": "Hello World!"})
+
 class UserProfileView(APIView):
     """
     Handles GET and PUT requests for the authenticated user's profile.

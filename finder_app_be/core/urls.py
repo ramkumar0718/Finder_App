@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
+    MyApiView,
     UserProfileView, 
     ProfilePictureUploadView,
     SendOTPView,
@@ -43,6 +44,8 @@ router = DefaultRouter()
 router.register(r'ownership-requests', OwnershipRequestViewSet, basename='ownership-request')
 
 urlpatterns = [
+    path('message/', MyApiView.as_view(), name='message'),
+
     path('profile/', UserProfileView.as_view(), name='user-profile'),
     path('profile/upload-pic/', ProfilePictureUploadView.as_view(), name='profile-pic-upload'),
     path('delete-account/', DeleteAccountView.as_view(), name='delete-account'),

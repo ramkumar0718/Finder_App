@@ -398,7 +398,7 @@ class _ChatScreenState extends State<ChatScreen> {
 
     final cleanPath = url.startsWith('/') ? url : '/$url';
 
-    const baseUrl = ApiService.baseDomain;
+    final baseUrl = ApiService.baseDomain;
     return '$baseUrl$cleanPath';
   }
 
