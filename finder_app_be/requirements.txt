@@ -24,6 +24,7 @@ googleapis-common-protos==1.71.0
 graphqlclient==0.2.4
 grpcio==1.76.0
 grpcio-status==1.76.0
+gunicorn==25.1.0
 h11==0.16.0
 h2==4.3.0
 hpack==4.1.0
@@ -32,6 +33,7 @@ httpx==0.28.1
 hyperframe==6.1.0
 idna==3.11
 msgpack==1.1.2
+packaging==26.0
 pillow==12.0.0
 proto-plus==1.26.1
 protobuf==6.33.0
