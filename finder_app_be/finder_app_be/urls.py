@@ -23,8 +23,6 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     # Map the core app to /api/
     path('api/', include('core.urls')),
+    path('api/chat/', include('chat.urls')),
 ]
 
-# Serve media files in development
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

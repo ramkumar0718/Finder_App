@@ -1,9 +1,9 @@
+import 'package:finder_app_fe/utils/string_extensions.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
+import '../services/api_service.dart';
 import 'home_screen.dart';
 import 'item_details_screen.dart';
+import '../models/request_model.dart';
 
 class NotificationScreen extends StatefulWidget {
   const NotificationScreen({super.key});
@@ -14,8 +14,10 @@ class NotificationScreen extends StatefulWidget {
 
 class _NotificationScreenState extends State<NotificationScreen> {
   List<ItemModel> _recentItems = [];
+  List<OwnershipRequest> _requests = [];
   bool _isLoading = true;
   String? _currentUserId;
+  String _selectedFilter = 'All'; // 'All', 'Recent', 'Request'
 
   @override
   void initState() {
@@ -25,25 +27,15 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
   Future<void> _fetchCurrentUser() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        final token = await user.getIdToken();
-        final response = await http.get(
-          Uri.parse('http://10.0.2.2:8000/api/profile/'),
-          headers: {'Authorization': 'Bearer $token'},
-        );
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          if (mounted) {
-            setState(() {
-              _currentUserId = data['user_id'];
-            });
-            _fetchRecentItems();
-          }
-        }
+      final data = await ApiService().fetchUserProfile();
+      if (data != null && mounted) {
+        setState(() {
+          _currentUserId = data['user_id'];
+        });
+        _fetchData();
       }
     } catch (e) {
-      print('Error fetching user profile: $e');
+      // Error fetching user profile
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -52,31 +44,37 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
   }
 
+  Future<void> _fetchData() async {
+    setState(() => _isLoading = true);
+    await Future.wait([_fetchRecentItems(), _fetchRequests()]);
+    if (mounted) {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _fetchRequests() async {
+    try {
+      final data = await ApiService().fetchOwnershipRequests();
+      if (mounted) {
+        setState(() {
+          _requests =
+              data.map((json) => OwnershipRequest.fromJson(json)).toList();
+        });
+      }
+    } catch (e) {
+      // Error fetching requests
+    }
+  }
+
   Future<void> _fetchRecentItems() async {
     try {
-      // Fetch found items
-      final foundResponse = await http.get(
-        Uri.parse('http://10.0.2.2:8000/api/found-items/'),
-      );
-
-      // Fetch lost items
-      final lostResponse = await http.get(
-        Uri.parse('http://10.0.2.2:8000/api/lost-items/'),
-      );
+      final foundData = await ApiService().fetchFoundItems();
+      final lostData = await ApiService().fetchLostItems();
 
       List<ItemModel> allItems = [];
+      allItems.addAll(foundData.map((json) => ItemModel.fromJson(json)));
+      allItems.addAll(lostData.map((json) => ItemModel.fromJson(json)));
 
-      if (foundResponse.statusCode == 200) {
-        final List<dynamic> foundData = jsonDecode(foundResponse.body);
-        allItems.addAll(foundData.map((json) => ItemModel.fromJson(json)));
-      }
-
-      if (lostResponse.statusCode == 200) {
-        final List<dynamic> lostData = jsonDecode(lostResponse.body);
-        allItems.addAll(lostData.map((json) => ItemModel.fromJson(json)));
-      }
-
-      // Filter items from past 30 days and exclude own posts
       final now = DateTime.now();
       final thirtyDaysAgo = now.subtract(const Duration(days: 30));
 
@@ -85,14 +83,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
             try {
               final postedDate = DateTime.parse(item.postedTime);
               final isRecent = postedDate.isAfter(thirtyDaysAgo);
-              final isNotOwnPost = item.ownerId != _currentUserId;
+              final isNotOwnPost = item.postedBy != _currentUserId;
               return isRecent && isNotOwnPost;
             } catch (e) {
               return false;
             }
           }).toList();
 
-      // Sort by posted_time descending (newest first)
       filteredItems.sort((a, b) {
         try {
           final dateA = DateTime.parse(a.postedTime);
@@ -106,16 +103,10 @@ class _NotificationScreenState extends State<NotificationScreen> {
       if (mounted) {
         setState(() {
           _recentItems = filteredItems;
-          _isLoading = false;
         });
       }
     } catch (e) {
-      print('Error fetching items: $e');
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      // Error fetching items
     }
   }
 
@@ -139,55 +130,338 @@ class _NotificationScreenState extends State<NotificationScreen> {
     }
   }
 
+  Future<void> _respondToRequest(int requestId, String action) async {
+    try {
+      final response = await ApiService().respondToOwnershipRequest(
+        requestId: requestId,
+        action: action,
+      );
+
+      if (response.statusCode == 200) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Request ${action}ed successfully!')),
+          );
+          _fetchData();
+        }
+      } else {
+        throw Exception('Failed to respond to request');
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error: $e')));
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    List<dynamic> combinedList = [];
+
+    if (_selectedFilter == 'All') {
+      combinedList.addAll(_requests);
+      combinedList.addAll(_recentItems);
+      // Sort combined list by time
+      combinedList.sort((a, b) {
+        DateTime dateA =
+            a is OwnershipRequest
+                ? a.createdAt
+                : DateTime.parse((a as ItemModel).postedTime);
+        DateTime dateB =
+            b is OwnershipRequest
+                ? b.createdAt
+                : DateTime.parse((b as ItemModel).postedTime);
+        return dateB.compareTo(dateA);
+      });
+    } else if (_selectedFilter == 'Recent') {
+      combinedList.addAll(_recentItems);
+    } else if (_selectedFilter == 'Request') {
+      combinedList.addAll(_requests);
+      // Sort requests by time
+      combinedList.sort(
+        (a, b) => (b as OwnershipRequest).createdAt.compareTo(
+          (a as OwnershipRequest).createdAt,
+        ),
+      );
+    }
+
     return Scaffold(
-      backgroundColor: Colors.grey[200],
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text(
           'Notifications',
           style: TextStyle(color: Colors.white),
         ),
         backgroundColor: Colors.blueAccent,
+        elevation: 0,
         iconTheme: const IconThemeData(color: Colors.white),
         automaticallyImplyLeading: false,
       ),
-      body:
-          _isLoading
-              ? const Center(child: CircularProgressIndicator())
-              : _recentItems.isEmpty
-              ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      Icons.notifications_off,
-                      size: 64,
-                      color: Colors.grey[400],
-                    ),
-                    const SizedBox(height: 16),
-                    Text(
-                      'No recent posts',
-                      style: TextStyle(fontSize: 18, color: Colors.grey[600]),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      'Posts from the past 30 days will appear here',
-                      style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-                    ),
-                  ],
-                ),
-              )
-              : RefreshIndicator(
-                onRefresh: _fetchRecentItems,
-                child: ListView.builder(
-                  padding: const EdgeInsets.all(16.0),
-                  itemCount: _recentItems.length,
-                  itemBuilder: (context, index) {
-                    return _buildNotificationCard(_recentItems[index]);
-                  },
-                ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(
+                children: [
+                  _buildFilterChip('All'),
+                  const SizedBox(width: 12),
+                  _buildFilterChip('Recent'),
+                  const SizedBox(width: 12),
+                  _buildFilterChip('Request'),
+                ],
               ),
+            ),
+          ),
+
+          Expanded(
+            child:
+                _isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : combinedList.isEmpty
+                    ? _buildEmptyState(
+                      'No notifications found',
+                      Icons.notifications_none,
+                    )
+                    : RefreshIndicator(
+                      onRefresh: _fetchData,
+                      child: ListView.builder(
+                        padding: const EdgeInsets.all(16.0),
+                        itemCount: combinedList.length,
+                        itemBuilder: (context, index) {
+                          final item = combinedList[index];
+                          if (item is OwnershipRequest) {
+                            return _buildRequestCard(item);
+                          } else {
+                            return _buildNotificationCard(item as ItemModel);
+                          }
+                        },
+                      ),
+                    ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterChip(String filter) {
+    final isSelected = _selectedFilter == filter;
+    return GestureDetector(
+      onTap: () {
+        setState(() {
+          _selectedFilter = filter;
+        });
+      },
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blueAccent : Colors.grey[200],
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          filter,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.black,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildEmptyState(String message, IconData icon) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(icon, size: 64, color: Colors.grey[400]),
+          const SizedBox(height: 16),
+          Text(
+            message,
+            style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRequestCard(OwnershipRequest request) {
+    final isReceived = request.ownerId == _currentUserId;
+    final statusColor =
+        request.status == 'accepted'
+            ? Colors.green
+            : request.status == 'rejected'
+            ? Colors.red
+            : Colors.orange;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      elevation: 1,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                CircleAvatar(
+                  backgroundColor: const Color(0xFFFFEFEC),
+                  radius: 24,
+                  child: Icon(
+                    isReceived ? Icons.download : Icons.upload,
+                    color: Colors.orange,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            isReceived ? 'Request Received' : 'Request Sent',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 6,
+                            ),
+                            decoration: BoxDecoration(
+                              color: statusColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              request.status.toUpperCase(),
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: statusColor,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        isReceived
+                            ? 'from @${request.finderId}'
+                            : 'to @${request.ownerId}',
+                        style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+                      ),
+                      if (isReceived && request.status == 'pending')
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2),
+                          child: Text(
+                            'Please verify within a day !',
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.bold,
+                              color: statusColor,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const Divider(height: 32),
+            Row(
+              children: [
+                if (request.foundItemDetails['item_img'] != null)
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.network(
+                      request.foundItemDetails['item_img'],
+                      width: 65,
+                      height: 65,
+                      fit: BoxFit.cover,
+                    ),
+                  )
+                else
+                  Container(
+                    width: 65,
+                    height: 65,
+                    decoration: BoxDecoration(
+                      color: Colors.grey[200],
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.inventory_2, color: Colors.grey),
+                  ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${request.foundItemDetails['item_name']} : ${request.foundItemDetails['post_id']}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      if (request.lostItemDetails != null)
+                        Text(
+                          'Matched with: ${request.lostItemDetails!['item_name']} : ${request.lostItemDetails!['post_id']}',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                if (isReceived && request.status == 'pending')
+                  Row(
+                    children: [
+                      _buildCircularActionButton(
+                        icon: Icons.check,
+                        color: Colors.green,
+                        onPressed:
+                            () => _respondToRequest(request.id, 'accept'),
+                      ),
+                      const SizedBox(width: 12),
+                      _buildCircularActionButton(
+                        icon: Icons.close,
+                        color: Colors.red,
+                        onPressed:
+                            () => _respondToRequest(request.id, 'reject'),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCircularActionButton({
+    required IconData icon,
+    required Color color,
+    required VoidCallback onPressed,
+  }) {
+    return InkWell(
+      onTap: onPressed,
+      child: Container(
+        width: 48,
+        height: 48,
+        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+        child: Icon(icon, color: Colors.white, size: 28),
+      ),
     );
   }
 
@@ -209,17 +483,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
         margin: const EdgeInsets.only(bottom: 16),
         elevation: 2,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        child: Container(
+        child: SizedBox(
           height: 80,
           child: Row(
             children: [
-              // Left side - Image (fully covered)
               ClipRRect(
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(12),
                   bottomLeft: Radius.circular(12),
                 ),
-                child: Container(
+                child: SizedBox(
                   width: 80,
                   height: 80,
                   child:
@@ -251,7 +524,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
 
               const SizedBox(width: 12),
 
-              // Right side - Description and Time
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -262,9 +534,8 @@ class _NotificationScreenState extends State<NotificationScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      // Description (2 lines max)
                       Text(
-                        item.description,
+                        item.description.toTitleCase(),
                         style: const TextStyle(
                           fontSize: 14,
                           color: Colors.black87,
@@ -273,7 +544,6 @@ class _NotificationScreenState extends State<NotificationScreen> {
                         overflow: TextOverflow.ellipsis,
                       ),
 
-                      // Time posted
                       Row(
                         children: [
                           Icon(

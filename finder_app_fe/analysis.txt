@@ -1,0 +1,13 @@
+﻿Analyzing 2 items...                                            
+
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\item_details_screen.dart:377:41 - deprecated_member_use
+   info - Statements in an if should be enclosed in a block - lib\pages\item_details_screen.dart:637:7 - curly_braces_in_flow_control_structures
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\item_details_screen.dart:950:56 - deprecated_member_use
+   info - Don't invoke 'print' in production code - lib\pages\notification_screen.dart:36:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\pages\notification_screen.dart:63:7 - avoid_print
+   info - Don't invoke 'print' in production code - lib\pages\notification_screen.dart:109:7 - avoid_print
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\notification_screen.dart:262:48 - deprecated_member_use
+   info - 'withOpacity' is deprecated and shouldn't be used. Use .withValues() to avoid precision loss - lib\pages\notification_screen.dart:293:40 - deprecated_member_use
+   info - Use a 'SizedBox' to add whitespace to a layout - lib\pages\notification_screen.dart:405:16 - sized_box_for_whitespace
+   info - Use a 'SizedBox' to add whitespace to a layout - lib\pages\notification_screen.dart:415:24 - sized_box_for_whitespace
+

@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-
-const String _djangoApiBaseUrl = 'http://10.0.2.2:8000/api';
+import '../services/api_service.dart';
+import 'auth/verify_otp_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -15,10 +14,11 @@ class EditProfileScreen extends StatefulWidget {
 class _EditProfileScreenState extends State<EditProfileScreen> {
   final user = FirebaseAuth.instance.currentUser;
   final _nameController = TextEditingController();
-  final _bioController = TextEditingController();
+  final _emailController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = true;
   bool _isSaving = false;
+  bool _emailChanged = false;
 
   @override
   void initState() {
@@ -29,33 +29,20 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
   @override
   void dispose() {
     _nameController.dispose();
-    _bioController.dispose();
+    _emailController.dispose();
     super.dispose();
-  }
-
-  Future<String?> _getIdToken() async {
-    return await user?.getIdToken();
   }
 
   Future<void> _fetchProfileData() async {
     setState(() => _isLoading = true);
-    final token = await _getIdToken();
-    if (token == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
 
     try {
-      final response = await http.get(
-        Uri.parse('$_djangoApiBaseUrl/profile/'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
+      final data = await ApiService().fetchUserProfile();
 
-      if (response.statusCode == 200 && mounted) {
-        final data = jsonDecode(response.body);
+      if (data != null && mounted) {
         setState(() {
           _nameController.text = data['name'] ?? '';
-          _bioController.text = data['bio'] ?? '';
+          _emailController.text = data['email'] ?? user?.email ?? '';
           _isLoading = false;
         });
       } else if (mounted) {
@@ -70,25 +57,13 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _isSaving = true);
-    final token = await _getIdToken();
-    if (token == null) return;
 
-    final updatedData = {
-      'name': _nameController.text.trim(),
-      'bio': _bioController.text.trim(),
-    };
+    final updatedData = {'name': _nameController.text.trim()};
 
     try {
-      final response = await http.put(
-        Uri.parse('$_djangoApiBaseUrl/profile/'),
-        headers: {
-          'Authorization': 'Bearer $token',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(updatedData),
-      );
+      final success = await ApiService().updateUserProfile(updatedData);
 
-      if (response.statusCode == 200 && mounted) {
+      if (success && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Profile updated successfully!')),
         );
@@ -109,10 +84,96 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     }
   }
 
+  void _showEmailChangeDialog() {
+    final emailController = TextEditingController();
+    showDialog(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Change Email'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'Enter your new email address. We will send an OTP to verify it.',
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: emailController,
+                  decoration: const InputDecoration(
+                    labelText: 'New Email',
+                    prefixIcon: Icon(Icons.email_outlined),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  final newEmail = emailController.text.trim();
+                  if (newEmail.isEmpty || !newEmail.contains('@')) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Please enter a valid email'),
+                      ),
+                    );
+                    return;
+                  }
+
+                  Navigator.pop(context);
+                  _requestEmailChangeOTP(newEmail);
+                },
+                child: const Text('Send OTP'),
+              ),
+            ],
+          ),
+    );
+  }
+
+  Future<void> _requestEmailChangeOTP(String newEmail) async {
+    setState(() => _isSaving = true);
+    final result = await ApiService().requestEmailChangeOTP(newEmail);
+    setState(() => _isSaving = false);
+
+    if (result['success']) {
+      if (mounted) {
+        final success = await Navigator.push<bool>(
+          context,
+          MaterialPageRoute(
+            builder:
+                (context) => VerifyOTPScreen(
+                  email: user?.email ?? '',
+                  firebaseUid: user?.uid ?? '',
+                  isEmailChange: true,
+                  newEmail: newEmail,
+                ),
+          ),
+        );
+
+        if (success == true) {
+          _emailChanged = true;
+          _fetchProfileData();
+        }
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['error'] ?? 'Failed to request OTP')),
+        );
+        setState(() => _isSaving = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[200],
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text(
           'Edit Profile',
@@ -120,6 +181,10 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
         ),
         backgroundColor: Colors.blueAccent,
         iconTheme: const IconThemeData(color: Colors.white),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.pop(context, _emailChanged),
+        ),
       ),
       body:
           _isLoading
@@ -146,28 +211,34 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                           labelText: 'Name',
                           prefixIcon: Icon(Icons.person_outline),
                         ),
+                        inputFormatters: [
+                          FilteringTextInputFormatter.deny(RegExp(r'\s')),
+                        ],
                         validator: (value) {
                           if (value == null || value.trim().isEmpty) {
                             return 'Please enter your name';
+                          }
+                          if (value.contains(' ')) {
+                            return 'Name cannot contain spaces';
+                          }
+                          if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value)) {
+                            return 'Alphanumeric characters and underscores only';
                           }
                           return null;
                         },
                       ),
                       const SizedBox(height: 20),
                       TextFormField(
-                        controller: _bioController,
-                        maxLines: 4,
-                        decoration: const InputDecoration(
-                          labelText: 'Bio',
-                          prefixIcon: Icon(Icons.info_outline),
-                          alignLabelWithHint: true,
+                        controller: _emailController,
+                        readOnly: true,
+                        decoration: InputDecoration(
+                          labelText: 'Email',
+                          prefixIcon: const Icon(Icons.email_outlined),
+                          suffixIcon: TextButton(
+                            onPressed: _showEmailChangeDialog,
+                            child: const Text('Change'),
+                          ),
                         ),
-                        validator: (value) {
-                          if (value != null && value.length > 500) {
-                            return 'Bio must be less than 500 characters';
-                          }
-                          return null;
-                        },
                       ),
                       const SizedBox(height: 40),
                       ElevatedButton(
@@ -189,7 +260,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                       ),
                       const SizedBox(height: 12),
                       TextButton(
-                        onPressed: () => Navigator.pop(context),
+                        onPressed: () => Navigator.pop(context, _emailChanged),
                         child: const Text(
                           'Cancel',
                           style: TextStyle(color: Colors.grey),

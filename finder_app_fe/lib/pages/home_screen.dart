@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'package:intl/intl.dart';
+import '../services/api_service.dart';
 import 'main_screen.dart';
 import 'item_details_screen.dart';
 
@@ -13,17 +11,26 @@ class ItemModel {
   final String? itemImg;
   final String category;
   final String description;
-  final String color;
+  final String colorId;
+  final String colorName;
   final String location;
   final String date;
   final String status;
   final String postedBy;
+  final String postedByName;
+  final String? postedByRole;
   final String postedTime;
   final String? profilePicUrl;
   final String? ownerId;
+  final String? ownerRole;
   final bool ownerIdentified;
   final String? finderId;
+  final String? finderRole;
   final bool finderIdentified;
+
+  final String? info;
+  final String? matchedPost;
+  final bool hasIssue;
 
   ItemModel({
     required this.id,
@@ -31,37 +38,109 @@ class ItemModel {
     this.itemImg,
     required this.category,
     required this.description,
-    required this.color,
+    required this.colorId,
+    required this.colorName,
     required this.location,
     required this.date,
     required this.status,
     required this.postedBy,
+    required this.postedByName,
+    this.postedByRole,
     required this.postedTime,
     this.profilePicUrl,
     this.ownerId,
+    this.ownerRole,
     this.ownerIdentified = false,
     this.finderId,
+    this.finderRole,
     this.finderIdentified = false,
+    this.info,
+    this.matchedPost,
+    this.hasIssue = false,
   });
 
   factory ItemModel.fromJson(Map<String, dynamic> json) {
     return ItemModel(
-      id: json['post_id'] ?? '',
-      itemName: json['item_name'] ?? 'Unknown Item',
-      itemImg: json['item_img'],
-      category: json['category'] ?? 'Other',
-      description: json['description'] ?? '',
-      color: json['color'] ?? 'Unknown',
-      location: json['location'] ?? 'Unknown',
-      date: json['date'] ?? '',
-      status: json['status'] ?? 'found',
-      postedBy: json['posted_by'] ?? 'Unknown',
-      postedTime: json['posted_time'] ?? '',
+      id: json['post_id']?.toString() ?? '',
+      itemName: json['item_name']?.toString() ?? 'Unknown Item',
+      itemImg: json['item_img']?.toString(), // Handle null dynamically
+      category: json['category']?.toString() ?? 'Other',
+      description: json['description']?.toString() ?? '',
+      colorId: json['color_id']?.toString() ?? 'none',
+      colorName: json['color_name']?.toString() ?? 'Unknown',
+      location: json['location']?.toString() ?? 'Unknown',
+      date: json['date']?.toString() ?? '',
+      status: json['status']?.toString() ?? 'found',
+      postedBy: json['posted_by']?.toString() ?? 'Unknown',
+      postedByName: json['posted_by_name']?.toString() ?? 'Unknown',
+      postedByRole: json['posted_by_role'],
+      postedTime: json['posted_time']?.toString() ?? '',
       profilePicUrl: json['posted_by_profile_pic'],
       ownerId: json['owner_id'],
+      ownerRole: json['owner_role'],
       ownerIdentified: json['owner_identified'] ?? false,
       finderId: json['finder_id'],
+      finderRole: json['finder_role'],
       finderIdentified: json['finder_identified'] ?? false,
+      info: json['info']?.toString(),
+      matchedPost: json['matched_post']?.toString(),
+      hasIssue: json['has_issue'] ?? false,
+    );
+  }
+}
+
+class FilterCriteria {
+  String itemType;
+  String userId;
+  String category;
+  String color;
+  String location;
+  DateTime? dateFrom;
+  DateTime? dateTo;
+  String matched;
+
+  FilterCriteria({
+    this.itemType = 'All',
+    this.userId = '',
+    this.category = 'All',
+    this.color = '',
+    this.location = '',
+    this.dateFrom,
+    this.dateTo,
+    this.matched = 'All',
+  });
+
+  bool get isActive =>
+      itemType != 'All' ||
+      userId.isNotEmpty ||
+      category != 'All' ||
+      color.isNotEmpty ||
+      location.isNotEmpty ||
+      dateFrom != null ||
+      dateTo != null ||
+      matched != 'All';
+
+  void reset() {
+    itemType = 'All';
+    userId = '';
+    category = 'All';
+    color = '';
+    location = '';
+    dateFrom = null;
+    dateTo = null;
+    matched = 'All';
+  }
+
+  FilterCriteria copy() {
+    return FilterCriteria(
+      itemType: itemType,
+      userId: userId,
+      category: category,
+      color: color,
+      location: location,
+      dateFrom: dateFrom,
+      dateTo: dateTo,
+      matched: matched,
     );
   }
 }
@@ -80,11 +159,24 @@ class _HomeScreenState extends State<HomeScreen> {
   List<ItemModel> _items = [];
   List<ItemModel> _filteredItems = [];
   bool _isLoading = true;
-  String _selectedFilter = 'All';
   final TextEditingController _searchController = TextEditingController();
   String? _currentUserId;
 
-  // Public method to show report options
+  FilterCriteria _filters = FilterCriteria();
+
+  final List<String> _categories = [
+    'All',
+    'Electronics',
+    'Documents',
+    'Luggage',
+    'Apparel',
+    'Accessories',
+    'Pets',
+    'Keys',
+    'Money',
+    'Other',
+  ];
+
   void showReportOptions() {
     _showReportOptions(context);
   }
@@ -99,21 +191,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchCurrentUser() async {
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user != null) {
-        final token = await user.getIdToken();
-        final response = await http.get(
-          Uri.parse('http://10.0.2.2:8000/api/profile/'),
-          headers: {'Authorization': 'Bearer $token'},
-        );
-        if (response.statusCode == 200) {
-          final data = jsonDecode(response.body);
-          if (mounted) {
-            setState(() {
-              _currentUserId = data['user_id'];
-            });
-          }
-        }
+      final userProfile = await ApiService().fetchUserProfile();
+      if (userProfile != null && mounted) {
+        setState(() {
+          _currentUserId = userProfile['user_id'];
+        });
       }
     } catch (e) {
       print('Error fetching user profile: $e');
@@ -129,29 +211,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _fetchItems() async {
     try {
-      // Fetch found items
-      final foundResponse = await http.get(
-        Uri.parse('http://10.0.2.2:8000/api/found-items/'),
-      );
-
-      // Fetch lost items
-      final lostResponse = await http.get(
-        Uri.parse('http://10.0.2.2:8000/api/lost-items/'),
-      );
+      final foundData = await ApiService().fetchFoundItems();
+      final lostData = await ApiService().fetchLostItems();
 
       List<ItemModel> allItems = [];
 
-      if (foundResponse.statusCode == 200) {
-        final List<dynamic> foundData = jsonDecode(foundResponse.body);
-        allItems.addAll(foundData.map((json) => ItemModel.fromJson(json)));
-      }
+      allItems.addAll(foundData.map((json) => ItemModel.fromJson(json)));
+      allItems.addAll(lostData.map((json) => ItemModel.fromJson(json)));
 
-      if (lostResponse.statusCode == 200) {
-        final List<dynamic> lostData = jsonDecode(lostResponse.body);
-        allItems.addAll(lostData.map((json) => ItemModel.fromJson(json)));
-      }
-
-      // Sort by posted_time descending (newest first)
       allItems.sort((a, b) {
         try {
           final dateA = DateTime.parse(a.postedTime);
@@ -185,23 +252,317 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _filteredItems =
           _items.where((item) {
-            final matchesFilter =
-                _selectedFilter == 'All' ||
-                item.status.toLowerCase() == _selectedFilter.toLowerCase();
             final matchesSearch =
+                query.isEmpty ||
                 item.itemName.toLowerCase().contains(query) ||
                 item.description.toLowerCase().contains(query);
-            return matchesFilter && matchesSearch;
+            if (!matchesSearch) return false;
+
+            if (_filters.itemType != 'All' &&
+                item.status.toLowerCase() != _filters.itemType.toLowerCase()) {
+              return false;
+            }
+
+            if (_filters.userId.isNotEmpty &&
+                !item.postedBy.toLowerCase().contains(
+                  _filters.userId.toLowerCase(),
+                )) {
+              return false;
+            }
+
+            if (_filters.category != 'All' &&
+                item.category != _filters.category) {
+              return false;
+            }
+
+            if (_filters.color.isNotEmpty &&
+                !item.colorName.toLowerCase().contains(
+                  _filters.color.toLowerCase(),
+                )) {
+              return false;
+            }
+
+            if (_filters.location.isNotEmpty &&
+                !item.location.toLowerCase().contains(
+                  _filters.location.toLowerCase(),
+                )) {
+              return false;
+            }
+
+            try {
+              final itemDate = DateTime.parse(item.date);
+              if (_filters.dateFrom != null &&
+                  itemDate.isBefore(_filters.dateFrom!)) {
+                return false;
+              }
+              if (_filters.dateTo != null &&
+                  itemDate.isAfter(_filters.dateTo!)) {
+                return false;
+              }
+            } catch (e) {
+              // If date parsing fails, keep the item or hide it?
+              // Re-check formatting if needed.
+            }
+
+            if (_filters.matched == 'Yes' && item.matchedPost == null) {
+              return false;
+            }
+            if (_filters.matched == 'No' && item.matchedPost != null) {
+              return false;
+            }
+
+            return true;
           }).toList();
     });
   }
 
-  void _onFilterChanged(String filter) {
-    if (!mounted) return;
-    setState(() {
-      _selectedFilter = filter;
-    });
-    _filterItems();
+  void _showFilterBottomSheet() {
+    FilterCriteria tempFilters = _filters.copy();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(context).viewInsets.bottom,
+                left: 16,
+                right: 16,
+                top: 16,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Center(
+                      child: Text(
+                        'Filter Items',
+                        style: TextStyle(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    const Text(
+                      'Item Type',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'All', label: Text('All')),
+                        ButtonSegment(value: 'Found', label: Text('Found')),
+                        ButtonSegment(value: 'Lost', label: Text('Lost')),
+                      ],
+                      selected: {tempFilters.itemType},
+                      onSelectionChanged: (Set<String> newSelection) {
+                        setModalState(() {
+                          tempFilters.itemType = newSelection.first;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      decoration: const InputDecoration(
+                        labelText: 'User ID',
+                        prefixText: '@',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (val) => tempFilters.userId = val,
+                      controller: TextEditingController(
+                        text: tempFilters.userId,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    DropdownButtonFormField<String>(
+                      initialValue: tempFilters.category,
+                      decoration: const InputDecoration(
+                        labelText: 'Category',
+                        border: OutlineInputBorder(),
+                      ),
+                      items:
+                          _categories.map((cat) {
+                            return DropdownMenuItem(
+                              value: cat,
+                              child: Text(cat),
+                            );
+                          }).toList(),
+                      onChanged: (val) {
+                        if (val != null) {
+                          setModalState(() => tempFilters.category = val);
+                        }
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              labelText: 'Color',
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (val) => tempFilters.color = val,
+                            controller: TextEditingController(
+                              text: tempFilters.color,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: TextField(
+                            decoration: const InputDecoration(
+                              labelText: 'Location',
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (val) => tempFilters.location = val,
+                            controller: TextEditingController(
+                              text: tempFilters.location,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Date Range',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate:
+                                    tempFilters.dateFrom ?? DateTime.now(),
+                                firstDate: DateTime(2000),
+                                lastDate: DateTime.now(),
+                              );
+                              if (picked != null) {
+                                setModalState(
+                                  () => tempFilters.dateFrom = picked,
+                                );
+                              }
+                            },
+                            child: Text(
+                              tempFilters.dateFrom == null
+                                  ? 'From'
+                                  : DateFormat(
+                                    'yyyy-MM-dd',
+                                  ).format(tempFilters.dateFrom!),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: OutlinedButton(
+                            onPressed: () async {
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate:
+                                    tempFilters.dateTo ?? DateTime.now(),
+                                firstDate: DateTime(2000),
+                                lastDate: DateTime.now(),
+                              );
+                              if (picked != null) {
+                                setModalState(
+                                  () => tempFilters.dateTo = picked,
+                                );
+                              }
+                            },
+                            child: Text(
+                              tempFilters.dateTo == null
+                                  ? 'To'
+                                  : DateFormat(
+                                    'yyyy-MM-dd',
+                                  ).format(tempFilters.dateTo!),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      'Matched Item',
+                      style: TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                    const SizedBox(height: 8),
+                    SegmentedButton<String>(
+                      segments: const [
+                        ButtonSegment(value: 'All', label: Text('All')),
+                        ButtonSegment(value: 'Yes', label: Text('Yes')),
+                        ButtonSegment(value: 'No', label: Text('No')),
+                      ],
+                      selected: {tempFilters.matched},
+                      onSelectionChanged: (Set<String> newSelection) {
+                        setModalState(() {
+                          tempFilters.matched = newSelection.first;
+                        });
+                      },
+                    ),
+                    const SizedBox(height: 24),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              setModalState(() {
+                                tempFilters.reset();
+                              });
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey[300],
+                              foregroundColor: Colors.black,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                            ),
+                            child: const Text('Reset All'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              setState(() {
+                                _filters = tempFilters;
+                              });
+                              _filterItems();
+                              Navigator.pop(context);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blueAccent,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 16),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(30),
+                              ),
+                            ),
+                            child: const Text('Apply Filters'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   void _showReportOptions(BuildContext context) {
@@ -253,6 +614,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text('Finder'),
         automaticallyImplyLeading: false,
@@ -280,7 +642,6 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          // Search Bar
           Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: 16.0,
@@ -290,7 +651,30 @@ class _HomeScreenState extends State<HomeScreen> {
               controller: _searchController,
               decoration: InputDecoration(
                 hintText: 'Search items...',
-                prefixIcon: const Icon(Icons.search),
+                prefixIcon: const Icon(Icons.search, color: Colors.grey),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (_searchController.text.isNotEmpty)
+                      IconButton(
+                        icon: const Icon(Icons.clear),
+                        onPressed: () {
+                          _searchController.clear();
+                          setState(() {});
+                        },
+                      ),
+                    IconButton(
+                      icon: Icon(
+                        _filters.isActive
+                            ? Icons.filter_list
+                            : Icons.filter_list_outlined,
+                        color:
+                            _filters.isActive ? Colors.blueAccent : Colors.grey,
+                      ),
+                      onPressed: _showFilterBottomSheet,
+                    ),
+                  ],
+                ),
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(30.0),
                   borderSide: BorderSide.none,
@@ -299,26 +683,35 @@ class _HomeScreenState extends State<HomeScreen> {
                 fillColor: Colors.grey[200],
                 contentPadding: const EdgeInsets.symmetric(vertical: 0),
               ),
+              onChanged: (value) {
+                setState(() {});
+              },
             ),
           ),
+
+          if (_filters.isActive)
+            Padding(
+              padding: const EdgeInsets.only(right: 16.0, bottom: 8.0),
+              child: Align(
+                alignment: Alignment.centerRight,
+                child: GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      _filters.reset();
+                    });
+                    _filterItems();
+                  },
+                  child: const Text(
+                    'Clear Filters',
+                    style: TextStyle(
+                      color: Colors.blueAccent,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ),
+            ),
           const SizedBox(height: 8),
-
-          // Filter Buttons
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Row(
-              children: [
-                _buildFilterButton('All'),
-                const SizedBox(width: 12),
-                _buildFilterButton('Found'),
-                const SizedBox(width: 12),
-                _buildFilterButton('Lost'),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // List
           Expanded(
             child:
                 _isLoading
@@ -355,27 +748,6 @@ class _HomeScreenState extends State<HomeScreen> {
             borderRadius: BorderRadius.circular(50),
           ),
           child: const Icon(Icons.add, color: Colors.white),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildFilterButton(String filter) {
-    final isSelected = _selectedFilter == filter;
-    return GestureDetector(
-      onTap: () => _onFilterChanged(filter),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
-        decoration: BoxDecoration(
-          color: isSelected ? Colors.blueAccent : Colors.grey[200],
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          filter,
-          style: TextStyle(
-            color: isSelected ? Colors.white : Colors.black,
-            fontWeight: FontWeight.bold,
-          ),
         ),
       ),
     );
@@ -448,15 +820,15 @@ class ItemCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header: Item Name and User Info
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Expanded(
                     child: Text(
                       _truncateText(
-                        toBeginningOfSentenceCase(item.itemName) ??
-                            item.itemName,
+                        item.itemName.isNotEmpty
+                            ? '${item.itemName[0].toUpperCase()}${item.itemName.substring(1)}'
+                            : item.itemName,
                         15,
                       ),
                       style: const TextStyle(
@@ -499,12 +871,9 @@ class ItemCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 5),
-
-              // Content: Image and Description with Location/Date
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Item Image
                   ClipRRect(
                     borderRadius: BorderRadius.circular(8),
                     child: SizedBox(
@@ -535,12 +904,10 @@ class ItemCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 12),
-                  // Description, Location, and Date
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Description
                         Text(
                           item.description,
                           style: TextStyle(
@@ -551,7 +918,6 @@ class ItemCard extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         const SizedBox(height: 8),
-                        // Location and Date in single line
                         Row(
                           children: [
                             Icon(
@@ -593,8 +959,6 @@ class ItemCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 1),
-
-              // Footer: Posted Time and Status Badge
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [

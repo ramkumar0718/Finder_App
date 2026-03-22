@@ -14,6 +14,9 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
   final _newPasswordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  bool _obscureCurrentPassword = true;
+  bool _obscureNewPassword = true;
+  bool _obscureConfirmPassword = true;
 
   Future<void> _changePassword() async {
     if (_formKey.currentState!.validate()) {
@@ -36,7 +39,6 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
             ),
           );
 
-          // Navigate back to profile screen - user stays logged in
           Navigator.pop(context);
         }
       } catch (e) {
@@ -82,11 +84,24 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 const SizedBox(height: 40),
                 TextFormField(
                   controller: _currentPasswordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: _obscureCurrentPassword,
+                  decoration: InputDecoration(
                     labelText: 'Current Password',
-                    prefixIcon: Icon(Icons.lock_outline_rounded),
+                    prefixIcon: const Icon(Icons.lock_outline_rounded),
                     helperText: 'Enter your current password to verify',
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureCurrentPassword
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscureCurrentPassword = !_obscureCurrentPassword;
+                        });
+                      },
+                    ),
                   ),
                   validator:
                       (value) =>
@@ -97,10 +112,23 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _newPasswordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: _obscureNewPassword,
+                  decoration: InputDecoration(
                     labelText: 'New Password',
-                    prefixIcon: Icon(Icons.vpn_key_rounded),
+                    prefixIcon: const Icon(Icons.vpn_key_rounded),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureNewPassword
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscureNewPassword = !_obscureNewPassword;
+                        });
+                      },
+                    ),
                   ),
                   validator:
                       (value) =>
@@ -111,10 +139,23 @@ class _ChangePasswordScreenState extends State<ChangePasswordScreen> {
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _confirmPasswordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: _obscureConfirmPassword,
+                  decoration: InputDecoration(
                     labelText: 'Confirm New Password',
-                    prefixIcon: Icon(Icons.vpn_key_off_rounded),
+                    prefixIcon: const Icon(Icons.vpn_key_off_rounded),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureConfirmPassword
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscureConfirmPassword = !_obscureConfirmPassword;
+                        });
+                      },
+                    ),
                   ),
                   validator: (value) {
                     if (value != _newPasswordController.text) {

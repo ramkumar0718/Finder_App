@@ -1,12 +1,12 @@
+import 'package:finder_app_fe/utils/string_extensions.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-import 'home_screen.dart'; // Import for ItemModel
+import '../services/api_service.dart';
+import 'home_screen.dart';
 import 'item_details_screen.dart';
 
 class MyPostsScreen extends StatefulWidget {
-  const MyPostsScreen({super.key});
+  final String? userId;
+  const MyPostsScreen({super.key, this.userId});
 
   @override
   State<MyPostsScreen> createState() => _MyPostsScreenState();
@@ -17,9 +17,8 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
   List<ItemModel> _foundItems = [];
   List<ItemModel> _lostItems = [];
   String? _currentUserId;
-  bool _isSearching = false;
   final TextEditingController _searchController = TextEditingController();
-  String _searchQuery = '';
+  String _selectedFilter = 'All';
 
   @override
   void initState() {
@@ -36,169 +35,168 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
   Future<void> _fetchCurrentUserAndPosts() async {
     setState(() => _isLoading = true);
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        setState(() => _isLoading = false);
-        return;
-      }
-
-      final token = await user.getIdToken();
-
-      // 1. Fetch User Profile to get user_id
-      final profileResponse = await http.get(
-        Uri.parse('http://10.0.2.2:8000/api/profile/'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
-
-      if (profileResponse.statusCode == 200) {
-        final profileData = jsonDecode(profileResponse.body);
+      if (widget.userId != null) {
+        _currentUserId = widget.userId;
+      } else {
+        final profileData = await ApiService().fetchUserProfile();
+        if (profileData == null) {
+          setState(() => _isLoading = false);
+          return;
+        }
         _currentUserId = profileData['user_id'];
       }
 
-      if (_currentUserId == null) {
-        setState(() => _isLoading = false);
-        return;
-      }
+      final foundData = await ApiService().fetchFoundItems();
+      final lostData = await ApiService().fetchLostItems();
 
-      // 2. Fetch Found Items
-      final foundResponse = await http.get(
-        Uri.parse('http://10.0.2.2:8000/api/found-items/'),
-      );
+      _foundItems =
+          foundData
+              .map((json) => ItemModel.fromJson(json))
+              .where((item) => item.postedBy == _currentUserId)
+              .toList();
 
-      // 3. Fetch Lost Items
-      final lostResponse = await http.get(
-        Uri.parse('http://10.0.2.2:8000/api/lost-items/'),
-      );
-
-      if (foundResponse.statusCode == 200) {
-        final List<dynamic> foundData = jsonDecode(foundResponse.body);
-        _foundItems =
-            foundData
-                .map((json) => ItemModel.fromJson(json))
-                .where(
-                  (item) => item.postedBy == _currentUserId,
-                ) // Filter by poster
-                .toList();
-
-        // Sort found items newest first
-        _foundItems.sort((a, b) {
-          try {
-            return DateTime.parse(
-              b.postedTime,
-            ).compareTo(DateTime.parse(a.postedTime));
-          } catch (e) {
-            return 0;
-          }
-        });
-      }
-
-      if (lostResponse.statusCode == 200) {
-        final List<dynamic> lostData = jsonDecode(lostResponse.body);
-        _lostItems =
-            lostData
-                .map((json) => ItemModel.fromJson(json))
-                .where(
-                  (item) => item.postedBy == _currentUserId,
-                ) // Filter by poster
-                .toList();
-
-        // Sort lost items newest first
-        _lostItems.sort((a, b) {
-          try {
-            return DateTime.parse(
-              b.postedTime,
-            ).compareTo(DateTime.parse(a.postedTime));
-          } catch (e) {
-            return 0;
-          }
-        });
-      }
+      _lostItems =
+          lostData
+              .map((json) => ItemModel.fromJson(json))
+              .where((item) => item.postedBy == _currentUserId)
+              .toList();
 
       if (mounted) {
         setState(() => _isLoading = false);
       }
     } catch (e) {
-      print('Error fetching my posts: $e');
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        backgroundColor: Colors.grey[100],
-        appBar: AppBar(
-          title:
-              _isSearching
-                  ? TextField(
-                    controller: _searchController,
-                    autofocus: true,
-                    style: const TextStyle(color: Colors.white),
-                    cursorColor: Colors.white,
-                    decoration: const InputDecoration(
-                      hintText: 'Search...',
-                      hintStyle: TextStyle(color: Colors.white70),
-                      border: InputBorder.none,
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: Text(
+          widget.userId != null
+              ? '${widget.userId?.toTitleCase()}\'s Posts'
+              : 'My Posts',
+          style: const TextStyle(color: Colors.white),
+        ),
+        backgroundColor: Colors.blueAccent,
+        iconTheme: const IconThemeData(color: Colors.white),
+        elevation: 0,
+      ),
+      body:
+          _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : Column(
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: (value) => setState(() {}),
+                      decoration: InputDecoration(
+                        hintText: 'Search my posts...',
+                        prefixIcon: const Icon(Icons.search),
+                        suffixIcon:
+                            _searchController.text.isNotEmpty
+                                ? IconButton(
+                                  icon: const Icon(
+                                    Icons.clear,
+                                    color: Colors.white,
+                                  ),
+                                  onPressed: () {
+                                    _searchController.clear();
+                                    setState(() {});
+                                  },
+                                )
+                                : null,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(30.0),
+                          borderSide: BorderSide.none,
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey[200],
+                        contentPadding: const EdgeInsets.symmetric(vertical: 0),
+                      ),
                     ),
-                    onChanged: (value) {
-                      setState(() {
-                        _searchQuery = value;
-                      });
-                    },
-                  )
-                  : const Text(
-                    'My Posts',
-                    style: TextStyle(color: Colors.white),
                   ),
-          backgroundColor: Colors.blueAccent,
-          iconTheme: const IconThemeData(color: Colors.white),
-          actions: [
-            IconButton(
-              icon: Icon(_isSearching ? Icons.close : Icons.search),
-              onPressed: () {
-                setState(() {
-                  if (_isSearching) {
-                    _isSearching = false;
-                    _searchQuery = '';
-                    _searchController.clear();
-                  } else {
-                    _isSearching = true;
-                  }
-                });
-              },
-            ),
-          ],
-          bottom: const TabBar(
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white70,
-            indicatorColor: Colors.white,
-            tabs: [Tab(text: 'Found Items'), Tab(text: 'Lost Items')],
+
+                  SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                    child: Row(
+                      children:
+                          ['All', 'Found', 'Lost', 'Issue'].map((filter) {
+                            return Padding(
+                              padding: const EdgeInsets.only(right: 12.0),
+                              child: _buildFilterButton(filter),
+                            );
+                          }).toList(),
+                    ),
+                  ),
+
+                  const SizedBox(height: 16),
+
+                  Expanded(child: _buildFilteredList()),
+                ],
+              ),
+    );
+  }
+
+  Widget _buildFilterButton(String filter) {
+    final isSelected = _selectedFilter == filter;
+    return GestureDetector(
+      onTap: () => setState(() => _selectedFilter = filter),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.blueAccent : Colors.grey[200],
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          filter,
+          style: TextStyle(
+            color: isSelected ? Colors.white : Colors.black,
+            fontWeight: FontWeight.bold,
           ),
         ),
-        body:
-            _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : TabBarView(
-                  children: [
-                    _buildPostsList(_foundItems, 'No found items posted yet.'),
-                    _buildPostsList(_lostItems, 'No lost items posted yet.'),
-                  ],
-                ),
       ),
     );
   }
 
-  Widget _buildPostsList(List<ItemModel> items, String emptyMessage) {
-    final filteredItems =
-        items.where((item) {
-          final query = _searchQuery.toLowerCase();
-          return item.itemName.toLowerCase().contains(query) ||
+  Widget _buildFilteredList() {
+    List<ItemModel> allItems = [..._foundItems, ..._lostItems];
+
+    allItems.sort((a, b) {
+      try {
+        return DateTime.parse(
+          b.postedTime,
+        ).compareTo(DateTime.parse(a.postedTime));
+      } catch (e) {
+        return 0;
+      }
+    });
+
+    final query = _searchController.text.toLowerCase();
+    final items =
+        allItems.where((item) {
+          final matchesSearch =
+              item.itemName.toLowerCase().contains(query) ||
               item.description.toLowerCase().contains(query);
+
+          bool matchesFilter = true;
+          if (_selectedFilter == 'Found') {
+            matchesFilter = item.status.toLowerCase() == 'found';
+          } else if (_selectedFilter == 'Lost') {
+            matchesFilter = item.status.toLowerCase() == 'lost';
+          } else if (_selectedFilter == 'Issue') {
+            matchesFilter = item.hasIssue;
+          }
+
+          return matchesSearch && matchesFilter;
         }).toList();
 
-    if (filteredItems.isEmpty) {
+    if (items.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
@@ -206,9 +204,9 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
             Icon(Icons.post_add, size: 60, color: Colors.grey[400]),
             const SizedBox(height: 16),
             Text(
-              _searchQuery.isNotEmpty
-                  ? 'No items found matching "$_searchQuery"'
-                  : emptyMessage,
+              _searchController.text.isNotEmpty
+                  ? 'No items found matching "${_searchController.text}"'
+                  : 'No posts found.',
               style: TextStyle(fontSize: 16, color: Colors.grey[600]),
             ),
           ],
@@ -219,19 +217,16 @@ class _MyPostsScreenState extends State<MyPostsScreen> {
     return RefreshIndicator(
       onRefresh: _fetchCurrentUserAndPosts,
       child: GridView.builder(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: 2,
-          crossAxisSpacing: 16,
-          mainAxisSpacing: 16,
-          childAspectRatio: 0.82, // Adjust for 3/4 image + text
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          childAspectRatio: 1.05,
         ),
-        itemCount: filteredItems.length,
+        itemCount: items.length,
         itemBuilder: (context, index) {
-          return _MyPostCard(
-            item: filteredItems[index],
-            currentUserId: _currentUserId,
-          );
+          return _MyPostCard(item: items[index], currentUserId: _currentUserId);
         },
       ),
     );
@@ -266,6 +261,11 @@ class _MyPostCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final status = item.status.toLowerCase();
+    final isLost = status == 'lost';
+    final statusColor = isLost ? Colors.red : Colors.green;
+    final statusText = isLost ? 'Lost' : 'Found';
+
     return GestureDetector(
       onTap: () {
         Navigator.push(
@@ -277,28 +277,17 @@ class _MyPostCard extends StatelessWidget {
           ),
         );
       },
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.grey.withOpacity(0.1),
-              spreadRadius: 1,
-              blurRadius: 5,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
+      child: Card(
+        elevation: 3,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Image Section (3/4 of the card)
             Expanded(
-              flex: 3,
+              flex: 2,
               child: ClipRRect(
                 borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(16),
+                  top: Radius.circular(12),
                 ),
                 child:
                     item.itemImg != null
@@ -326,50 +315,67 @@ class _MyPostCard extends StatelessWidget {
               ),
             ),
 
-            // Details Section (Bottom part)
+            // Item Details
             Padding(
-              padding: const EdgeInsets.all(10.0), // Slightly reduced padding
+              padding: const EdgeInsets.fromLTRB(8.0, 8.0, 8.0, 6.0),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Item Name
                   Text(
-                    item.itemName,
+                    item.itemName.toTitleCase(),
                     style: const TextStyle(
-                      fontSize: 16,
+                      fontSize: 14,
                       fontWeight: FontWeight.bold,
                       color: Colors.black87,
                     ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
-                  const SizedBox(height: 4),
-                  // Location and Time
+                  const SizedBox(height: 6),
+
                   Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      const Icon(
-                        Icons.location_on_outlined,
-                        size: 14,
-                        color: Colors.grey,
-                      ),
-                      const SizedBox(width: 4),
                       Expanded(
-                        child: Text(
-                          item.location,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                        child: Row(
+                          children: [
+                            const Icon(
+                              Icons.calendar_today,
+                              size: 12,
+                              color: Colors.grey,
+                            ),
+                            const SizedBox(width: 4),
+                            Expanded(
+                              child: Text(
+                                _formatTimeAgo(item.postedTime),
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.grey[600],
+                                ),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '• ${_formatTimeAgo(item.postedTime)}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
+
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 4,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: statusColor, width: 1.5),
+                        ),
+                        child: Text(
+                          statusText,
+                          style: TextStyle(
+                            color: statusColor,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 11,
+                          ),
                         ),
                       ),
                     ],

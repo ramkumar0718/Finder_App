@@ -14,8 +14,11 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  bool _obscurePassword = true;
+  bool _submitted = false;
 
   Future<void> _login() async {
+    setState(() => _submitted = true);
     if (_formKey.currentState!.validate()) {
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       await authProvider.login(
@@ -68,6 +71,10 @@ class _LoginScreenState extends State<LoginScreen> {
           padding: const EdgeInsets.all(32.0),
           child: Form(
             key: _formKey,
+            autovalidateMode:
+                _submitted
+                    ? AutovalidateMode.onUserInteraction
+                    : AutovalidateMode.disabled,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisAlignment: MainAxisAlignment.center,
@@ -91,6 +98,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
+                  textInputAction: TextInputAction.next,
                   decoration: const InputDecoration(
                     labelText: 'Email Address',
                     prefixIcon: Icon(Icons.email_rounded),
@@ -104,10 +112,25 @@ class _LoginScreenState extends State<LoginScreen> {
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: _obscurePassword,
+                  textInputAction: TextInputAction.done,
+                  onFieldSubmitted: (_) => _login(),
+                  decoration: InputDecoration(
                     labelText: 'Password',
-                    prefixIcon: Icon(Icons.lock_rounded),
+                    prefixIcon: const Icon(Icons.lock_rounded),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
                   ),
                   validator:
                       (value) =>
@@ -141,7 +164,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 30),
 
-                // Divider with "OR"
                 Row(
                   children: [
                     Expanded(child: Divider(color: Colors.grey[400])),
@@ -160,7 +182,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 30),
 
-                // Google Sign-In Button
                 Consumer<AuthProvider>(
                   builder: (context, authProvider, child) {
                     return OutlinedButton.icon(
@@ -193,7 +214,6 @@ class _LoginScreenState extends State<LoginScreen> {
                 ),
                 const SizedBox(height: 16),
 
-                // Apple Sign-In Button (only show on iOS/macOS)
                 if (Platform.isIOS || Platform.isMacOS)
                   Consumer<AuthProvider>(
                     builder: (context, authProvider, child) {

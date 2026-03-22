@@ -1,12 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:convert';
 import 'dart:io';
-
-const String _djangoApiBaseUrl = 'http://10.0.2.2:8000/api';
+import '../services/api_service.dart';
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
@@ -28,45 +24,15 @@ class _ProfileScreenState extends State<ProfileScreen> {
     _fetchProfileData();
   }
 
-  Future<String?> _getIdToken() async {
-    try {
-      return await user?.getIdToken();
-    } catch (e) {
-      print('Error getting ID token: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Network error: Failed to authenticate. Please check your connection.',
-            ),
-          ),
-        );
-      }
-      return null;
-    }
-  }
-
   Future<void> _fetchProfileData({bool isRefresh = false}) async {
     if (!isRefresh) setState(() => _isLoading = true);
-    final token = await _getIdToken();
-    if (token == null) {
-      if (mounted) setState(() => _isLoading = false);
-      return;
-    }
 
     try {
-      final response = await http.get(
-        Uri.parse('$_djangoApiBaseUrl/profile/'),
-        headers: {'Authorization': 'Bearer $token'},
-      );
+      final data = await ApiService().fetchUserProfile();
 
-      if (response.statusCode == 200) {
-        _profileData = jsonDecode(response.body);
-        print('[ProfileScreen] Profile data: $_profileData'); // Debug
+      if (data != null) {
+        _profileData = data;
       } else {
-        print(
-          '[ProfileScreen] Profile fetch failed: ${response.statusCode}',
-        ); // Debug
         _profileData = {
           'name': user?.displayName ?? 'New User',
           'email': user?.email,
@@ -75,7 +41,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         };
       }
     } catch (e) {
-      print('[ProfileScreen] Network error fetching profile: $e');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -93,64 +58,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
     }
   }
 
-  MediaType _getMediaType(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    switch (ext) {
-      case 'jpg':
-      case 'jpeg':
-        return MediaType('image', 'jpeg');
-      case 'png':
-        return MediaType('image', 'png');
-      case 'webp':
-        return MediaType('image', 'webp');
-      default:
-        return MediaType('image', 'jpeg'); // Default fallback
-    }
-  }
-
   Future<void> _uploadImage(File image) async {
     setState(() => _isLoading = true);
-    final token = await _getIdToken();
-    if (token == null) return;
 
-    var request = http.MultipartRequest(
-      'POST',
-      Uri.parse('$_djangoApiBaseUrl/profile/upload-pic/'),
-    );
-    request.headers['Authorization'] = 'Bearer $token';
+    final result = await ApiService().uploadProfilePicture(image);
 
-    final mediaType = _getMediaType(image.path);
-    request.files.add(
-      await http.MultipartFile.fromPath(
-        'profile_pic',
-        image.path,
-        contentType: mediaType,
-      ),
-    );
-
-    try {
-      final response = await request.send();
-      final responseBody = await http.Response.fromStream(response);
-
-      if (response.statusCode == 200) {
-        final data = jsonDecode(responseBody.body);
-        if (mounted) {
-          setState(() {
-            _profileData['profile_pic_url'] = data['profile_pic_url'];
-            _newProfileImage = null;
-          });
-        }
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Profile picture updated!')),
-        );
+    if (result['success']) {
+      if (mounted) {
+        setState(() {
+          _profileData['profile_pic_url'] = result['data']['profile_pic_url'];
+          _newProfileImage = null;
+        });
       }
-    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Profile picture updated!')));
+    } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Network error uploading image: $e')),
+        SnackBar(content: Text('Error uploading image: ${result['error']}')),
       );
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
     }
+
+    if (mounted) setState(() => _isLoading = false);
   }
 
   Future<void> _logout() async {
@@ -163,9 +92,12 @@ class _ProfileScreenState extends State<ProfileScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[200],
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
-        title: const Text('Profile', style: TextStyle(color: Colors.white)),
+        title: Text(
+          _profileData['role'] == 'admin' ? 'Admin Profile' : 'Profile',
+          style: const TextStyle(color: Colors.white),
+        ),
         backgroundColor: Colors.blueAccent,
         iconTheme: const IconThemeData(color: Colors.white),
       ),
@@ -182,11 +114,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
-                      // Profile Picture
+                      if (_profileData['role'] == 'admin') ...[
+                        _buildAdminBadge(),
+                        const SizedBox(height: 20),
+                      ],
+
                       _buildProfilePicture(),
                       const SizedBox(height: 12),
 
-                      // User ID
                       Text(
                         '@${_profileData['user_id'] ?? 'user'}',
                         style: const TextStyle(
@@ -197,22 +132,28 @@ class _ProfileScreenState extends State<ProfileScreen> {
                       ),
                       const SizedBox(height: 15),
 
-                      // My Posts Statistics Section
-                      _buildMyPostsCard(),
-                      const SizedBox(height: 5),
+                      if (_profileData['role'] != 'admin') ...[
+                        _buildMyPostsCard(),
+                        const SizedBox(height: 5),
+                      ],
 
-                      // Personal Details Section
                       _buildSectionHeader(
                         'Personal Details',
-                        onEditTap: () {
-                          Navigator.pushNamed(context, '/edit-profile');
+                        onEditTap: () async {
+                          final result = await Navigator.pushNamed(
+                            context,
+                            '/edit-profile',
+                          );
+                          if (result == true) {
+                            _fetchProfileData(isRefresh: true);
+                          }
                         },
                       ),
                       const SizedBox(height: 5),
                       _buildPersonalDetailsContainer(),
 
                       const SizedBox(height: 12),
-                      // Utilities Section
+
                       _buildSectionHeader('Utilities'),
 
                       const SizedBox(height: 12),
@@ -224,15 +165,46 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
+  Widget _buildAdminBadge() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.blueAccent,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.blueAccent.withOpacity(0.35),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Text(
+            'Admin',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 0.5,
+            ),
+          ),
+          SizedBox(width: 6),
+          Icon(Icons.verified, color: Colors.white, size: 18),
+        ],
+      ),
+    );
+  }
+
   Widget _buildProfilePicture() {
     final imageUrl = _profileData['profile_pic_url'];
     final bool hasValidUrl =
         imageUrl != null &&
         imageUrl.isNotEmpty &&
         imageUrl.toString().isNotEmpty &&
-        !imageUrl.toString().contains(
-          'cdn.example.com',
-        ); // Filter out old mock URLs
+        !imageUrl.toString().contains('cdn.example.com');
 
     return GestureDetector(
       onTap: _pickImage,
@@ -255,8 +227,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
                           height: 120,
                           fit: BoxFit.cover,
                           errorBuilder: (context, error, stackTrace) {
-                            // Show default icon if image fails to load
-                            print('[ProfileScreen] Image load error: $error');
                             return const Icon(
                               Icons.person,
                               size: 60,
@@ -348,7 +318,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           _buildDetailRow(
             icon: Icons.email_outlined,
             label: 'Email',
-            value: user?.email ?? 'Not set',
+            value: _profileData['email'] ?? user?.email ?? 'Not set',
           ),
         ],
       ),
@@ -372,10 +342,10 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         children: [
           _buildUtilityRow(
-            icon: Icons.lock_outline,
-            label: 'Change Password',
+            icon: Icons.settings_outlined,
+            label: 'Settings',
             onTap: () {
-              Navigator.pushNamed(context, '/change-password');
+              Navigator.pushNamed(context, '/settings');
             },
           ),
           const Divider(height: 1),
@@ -432,7 +402,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             const SizedBox(width: 12),
             Text(
               label,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 15,
                 color: Colors.black87,
                 fontWeight: FontWeight.w500,
@@ -447,7 +417,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildMyPostsCard() {
-    // Get counts from profile data, defaulting to 0 if not present
     final foundCount = _profileData['found_count'] ?? 0;
     final lostCount = _profileData['lost_count'] ?? 0;
 
@@ -473,8 +442,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Title
-            // Title with Navigation
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -504,26 +471,24 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 12),
 
-            // Percentage Bar
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
-              child: Container(
+              child: SizedBox(
                 height: 12,
                 child: Row(
                   children: [
-                    // Found items section
                     if (foundPercentage > 0)
                       Expanded(
                         flex: (foundCount * 100).toInt(),
                         child: Container(color: const Color(0xFF239387)),
                       ),
-                    // Lost items section
+
                     if (lostPercentage > 0)
                       Expanded(
                         flex: (lostCount * 100).toInt(),
                         child: Container(color: Colors.black),
                       ),
-                    // Remaining section (if no posts)
+
                     if (totalPosts == 0)
                       Expanded(child: Container(color: Colors.blue[50])),
                   ],
@@ -532,7 +497,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 12),
 
-            // Found Items Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -565,7 +529,6 @@ class _ProfileScreenState extends State<ProfileScreen> {
             ),
             const SizedBox(height: 12),
 
-            // Lost Items Row
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [

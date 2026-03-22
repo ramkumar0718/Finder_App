@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:http/http.dart' as http;
-import 'dart:convert';
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sign_in_with_apple/sign_in_with_apple.dart';
-
-const String _djangoApiBaseUrl = 'http://10.0.2.2:8000/api';
+import '../services/api_service.dart';
 
 class AuthProvider extends ChangeNotifier {
   final FirebaseAuth _auth = FirebaseAuth.instance;
@@ -37,11 +34,9 @@ class AuthProvider extends ChangeNotifier {
         email: email,
         password: password,
       );
-      // Don't send Firebase verification email anymore
-      // OTP will be sent via Django backend
     } on FirebaseAuthException catch (e) {
       _setError(e.message);
-    } catch (e) {
+    } catch (_) {
       _setError('An unexpected error occurred.');
     } finally {
       _setLoading(false);
@@ -53,11 +48,9 @@ class AuthProvider extends ChangeNotifier {
     _setError(null);
     try {
       await _auth.signInWithEmailAndPassword(email: email, password: password);
-      // Check if email is verified via Django backend
-      // For now, we'll allow login and check verification status in the app
     } on FirebaseAuthException catch (e) {
       _setError(e.message);
-    } catch (e) {
+    } catch (_) {
       _setError('An unexpected error occurred.');
     } finally {
       _setLoading(false);
@@ -147,7 +140,7 @@ class AuthProvider extends ChangeNotifier {
       await _auth.signInWithCredential(credential);
 
       // Sync user data with backend
-      await _syncGoogleUser(googleUser);
+      await ApiService().syncGoogleUser(googleUser);
     } on FirebaseAuthException catch (e) {
       _setError(e.message ?? 'Google sign-in failed');
     } catch (e) {
@@ -189,7 +182,7 @@ class AuthProvider extends ChangeNotifier {
       await _auth.signInWithCredential(oauthCredential);
 
       // Sync user data with backend
-      await _syncAppleUser(appleCredential);
+      await ApiService().syncAppleUser(appleCredential);
     } on FirebaseAuthException catch (e) {
       _setError(e.message ?? 'Apple sign-in failed');
     } on SignInWithAppleAuthorizationException catch (e) {
@@ -206,115 +199,20 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _syncGoogleUser(GoogleSignInAccount googleUser) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    try {
-      final body = {
-        'email': user.email,
-        'firebase_uid': user.uid,
-        'user_name':
-            googleUser.displayName ?? user.email?.split('@')[0] ?? 'User',
-        'profile_pic_url': googleUser.photoUrl,
-      };
-
-      final response = await http.post(
-        Uri.parse('$_djangoApiBaseUrl/auth/google-login/'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
-
-      if (response.statusCode != 200) {
-        throw Exception('Failed to sync user data: ${response.body}');
-      }
-    } catch (e) {
-      print('Error syncing Google user: $e');
-      // Don't throw error to prevent login failure
-    }
-  }
-
-  Future<void> _syncAppleUser(
-    AuthorizationCredentialAppleID appleCredential,
-  ) async {
-    final user = _auth.currentUser;
-    if (user == null) return;
-
-    try {
-      // Extract full name from Apple credential
-      String userName = 'User';
-      if (appleCredential.givenName != null ||
-          appleCredential.familyName != null) {
-        userName =
-            '${appleCredential.givenName ?? ''} ${appleCredential.familyName ?? ''}'
-                .trim();
-      } else if (user.displayName != null) {
-        userName = user.displayName!;
-      } else if (user.email != null) {
-        userName = user.email!.split('@')[0];
-      }
-
-      final body = {
-        'email': user.email,
-        'firebase_uid': user.uid,
-        'user_name': userName,
-      };
-
-      final response = await http.post(
-        Uri.parse(
-          '$_djangoApiBaseUrl/auth/google-login/',
-        ), // Using same endpoint
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
-
-      if (response.statusCode != 200) {
-        throw Exception('Failed to sync user data: ${response.body}');
-      }
-    } catch (e) {
-      print('Error syncing Apple user: $e');
-      // Don't throw error to prevent login failure
-    }
-  }
-
   // --- OTP Methods (Django Backend) ---
 
   Future<bool> sendOTP(String email, {String? username}) async {
     _setLoading(true);
     _setError(null);
 
-    try {
-      final firebaseUid = _auth.currentUser?.uid;
-      if (firebaseUid == null) {
-        _setError('User not authenticated');
-        _setLoading(false);
-        return false;
-      }
+    final result = await ApiService().sendOTP(email, username: username);
 
-      final body = {
-        'email': email,
-        'firebase_uid': firebaseUid,
-        if (username != null && username.isNotEmpty) 'user_name': username,
-      };
+    _setLoading(false);
 
-      final response = await http.post(
-        Uri.parse('$_djangoApiBaseUrl/auth/send-otp/'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
-
-      _setLoading(false);
-
-      if (response.statusCode == 200) {
-        return true;
-      } else {
-        final errorData = jsonDecode(response.body);
-        _setError(errorData['error'] ?? 'Failed to send OTP');
-        return false;
-      }
-    } catch (e) {
-      _setLoading(false);
-      _setError('Network error: $e');
+    if (result['success']) {
+      return true;
+    } else {
+      _setError(result['error']);
       return false;
     }
   }
@@ -323,25 +221,14 @@ class AuthProvider extends ChangeNotifier {
     _setLoading(true);
     _setError(null);
 
-    try {
-      final response = await http.post(
-        Uri.parse('$_djangoApiBaseUrl/auth/verify-otp/'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'otp_code': otpCode}),
-      );
+    final result = await ApiService().verifyOTP(email, otpCode);
 
-      _setLoading(false);
+    _setLoading(false);
 
-      if (response.statusCode == 200) {
-        return true;
-      } else {
-        final errorData = jsonDecode(response.body);
-        _setError(errorData['error'] ?? 'Verification failed');
-        return false;
-      }
-    } catch (e) {
-      _setLoading(false);
-      _setError('Network error: $e');
+    if (result['success']) {
+      return true;
+    } else {
+      _setError(result['error']);
       return false;
     }
   }
@@ -350,32 +237,14 @@ class AuthProvider extends ChangeNotifier {
     _setLoading(true);
     _setError(null);
 
-    try {
-      final firebaseUid = _auth.currentUser?.uid;
-      if (firebaseUid == null) {
-        _setError('User not authenticated');
-        _setLoading(false);
-        return false;
-      }
+    final result = await ApiService().resendOTP(email);
 
-      final response = await http.post(
-        Uri.parse('$_djangoApiBaseUrl/auth/resend-otp/'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'firebase_uid': firebaseUid}),
-      );
+    _setLoading(false);
 
-      _setLoading(false);
-
-      if (response.statusCode == 200) {
-        return true;
-      } else {
-        final errorData = jsonDecode(response.body);
-        _setError(errorData['error'] ?? 'Failed to resend OTP');
-        return false;
-      }
-    } catch (e) {
-      _setLoading(false);
-      _setError('Network error: $e');
+    if (result['success']) {
+      return true;
+    } else {
+      _setError(result['error']);
       return false;
     }
   }

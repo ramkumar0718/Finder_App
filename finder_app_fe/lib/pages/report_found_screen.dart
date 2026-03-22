@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:intl/intl.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'dart:io';
 import 'dart:convert';
+import '../services/api_service.dart';
 
 class ReportFoundScreen extends StatefulWidget {
   const ReportFoundScreen({super.key});
@@ -18,14 +16,12 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
 
-  // Controllers
   final _itemNameController = TextEditingController();
   final _descriptionController = TextEditingController();
   final _colorController = TextEditingController();
   final _locationController = TextEditingController();
   final _dateController = TextEditingController();
 
-  // State variables
   File? _selectedImage;
   String? _selectedCategory;
   DateTime? _selectedDate;
@@ -68,21 +64,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
     }
   }
 
-  MediaType _getMediaType(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    switch (ext) {
-      case 'jpg':
-      case 'jpeg':
-        return MediaType('image', 'jpeg');
-      case 'png':
-        return MediaType('image', 'png');
-      case 'webp':
-        return MediaType('image', 'webp');
-      default:
-        return MediaType('image', 'jpeg');
-    }
-  }
-
   Future<void> _submitReport() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -100,39 +81,25 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
     });
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        throw Exception('User not authenticated');
-      }
-      final token = await user.getIdToken();
+      final colorInput =
+          _colorController.text.trim().replaceAll(' ', '').toLowerCase();
+      final colorInfo = await ApiService().fetchColorInfo(colorInput);
 
-      var request = http.MultipartRequest(
-        'POST',
-        Uri.parse('http://10.0.2.2:8000/api/found-items/create/'),
+      final fields = {
+        'item_name': _itemNameController.text,
+        'category': _selectedCategory!,
+        'description': _descriptionController.text,
+        'color_id': colorInfo['color_id']!,
+        'color_name': colorInfo['color_name']!,
+        'location': _locationController.text,
+        'date': _dateController.text,
+      };
+
+      final response = await ApiService().reportItem(
+        isLost: false,
+        fields: fields,
+        image: _selectedImage!,
       );
-
-      request.headers['Authorization'] = 'Bearer $token';
-
-      // Add fields
-      request.fields['item_name'] = _itemNameController.text;
-      request.fields['category'] = _selectedCategory!;
-      request.fields['description'] = _descriptionController.text;
-      request.fields['color'] = _colorController.text;
-      request.fields['location'] = _locationController.text;
-      request.fields['date'] = _dateController.text;
-
-      // Add file
-      final mediaType = _getMediaType(_selectedImage!.path);
-      request.files.add(
-        await http.MultipartFile.fromPath(
-          'item_img',
-          _selectedImage!.path,
-          contentType: mediaType,
-        ),
-      );
-
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
 
       if (response.statusCode == 201) {
         if (mounted) {
@@ -142,13 +109,11 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
           Navigator.pop(context);
         }
       } else if (response.statusCode == 400) {
-        // Parse validation errors
         try {
           final Map<String, dynamic> errors = jsonDecode(response.body);
           String errorMessage = '';
 
           errors.forEach((key, value) {
-            // Format key: item_name -> Item Name
             String fieldName = key
                 .replaceAll('_', ' ')
                 .split(' ')
@@ -175,7 +140,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
             );
           }
         } catch (e) {
-          // Fallback if parsing fails
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(
@@ -223,7 +187,7 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[200],
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text(
           'Report Found Item',
@@ -242,7 +206,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Image Picker
                       GestureDetector(
                         onTap: _pickImage,
                         child: Container(
@@ -277,7 +240,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Item Name
                       TextFormField(
                         controller: _itemNameController,
                         decoration: const InputDecoration(
@@ -294,9 +256,8 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Category Dropdown
                       DropdownButtonFormField<String>(
-                        value: _selectedCategory,
+                        initialValue: _selectedCategory,
                         decoration: const InputDecoration(
                           labelText: 'Category',
                           border: OutlineInputBorder(),
@@ -323,7 +284,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Description
                       TextFormField(
                         controller: _descriptionController,
                         decoration: const InputDecoration(
@@ -341,7 +301,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Color
                       TextFormField(
                         controller: _colorController,
                         decoration: const InputDecoration(
@@ -358,7 +317,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Location
                       TextFormField(
                         controller: _locationController,
                         decoration: const InputDecoration(
@@ -375,7 +333,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
                       ),
                       const SizedBox(height: 16),
 
-                      // Date Found
                       TextFormField(
                         controller: _dateController,
                         decoration: const InputDecoration(
@@ -394,7 +351,6 @@ class _ReportFoundScreenState extends State<ReportFoundScreen> {
                       ),
                       const SizedBox(height: 30),
 
-                      // Submit Button
                       ElevatedButton(
                         onPressed: _submitReport,
                         style: ElevatedButton.styleFrom(

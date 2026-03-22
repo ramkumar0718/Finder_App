@@ -1,12 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:http/http.dart' as http;
-import 'package:http_parser/http_parser.dart';
 import 'package:intl/intl.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+
 import 'dart:io';
 import 'dart:convert';
-import 'home_screen.dart'; // To access ItemModel
+import 'home_screen.dart';
+import '../services/api_service.dart';
 
 class EditItemScreen extends StatefulWidget {
   final ItemModel item;
@@ -21,14 +20,12 @@ class _EditItemScreenState extends State<EditItemScreen> {
   final _formKey = GlobalKey<FormState>();
   bool _isLoading = false;
 
-  // Controllers
   late TextEditingController _itemNameController;
   late TextEditingController _descriptionController;
   late TextEditingController _colorController;
   late TextEditingController _locationController;
   late TextEditingController _dateController;
 
-  // State variables
   File? _selectedImage;
   String? _selectedCategory;
   String? _selectedStatus;
@@ -46,17 +43,14 @@ class _EditItemScreenState extends State<EditItemScreen> {
     'Other',
   ];
 
-  final List<String> _statuses = ['Found', 'Lost'];
-
   @override
   void initState() {
     super.initState();
-    // Pre-populate fields with current item data
     _itemNameController = TextEditingController(text: widget.item.itemName);
     _descriptionController = TextEditingController(
       text: widget.item.description,
     );
-    _colorController = TextEditingController(text: widget.item.color);
+    _colorController = TextEditingController(text: widget.item.colorName);
     _locationController = TextEditingController(text: widget.item.location);
     _dateController = TextEditingController(text: widget.item.date);
 
@@ -107,21 +101,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
     }
   }
 
-  MediaType _getMediaType(String path) {
-    final ext = path.split('.').last.toLowerCase();
-    switch (ext) {
-      case 'jpg':
-      case 'jpeg':
-        return MediaType('image', 'jpeg');
-      case 'png':
-        return MediaType('image', 'png');
-      case 'webp':
-        return MediaType('image', 'webp');
-      default:
-        return MediaType('image', 'jpeg');
-    }
-  }
-
   Future<void> _submitUpdate() async {
     if (!_formKey.currentState!.validate()) {
       return;
@@ -132,44 +111,28 @@ class _EditItemScreenState extends State<EditItemScreen> {
     });
 
     try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        throw Exception('User not authenticated');
-      }
+      final colorInput =
+          _colorController.text.trim().replaceAll(' ', '').toLowerCase();
+      final colorInfo = await ApiService().fetchColorInfo(colorInput);
 
-      final token = await user.getIdToken();
-      final endpoint =
-          _selectedStatus!.toLowerCase() == 'found'
-              ? 'found-items'
-              : 'lost-items';
+      final fields = {
+        'item_name': _itemNameController.text,
+        'category': _selectedCategory!,
+        'description': _descriptionController.text,
+        'color_id': colorInfo['color_id']!,
+        'color_name': colorInfo['color_name']!,
+        'location': _locationController.text,
+        'date': _dateController.text,
+      };
 
-      var request = http.MultipartRequest(
-        'PUT',
-        Uri.parse('http://10.0.2.2:8000/api/$endpoint/${widget.item.id}/'),
+      final isLost = _selectedStatus!.toLowerCase() != 'found';
+
+      final response = await ApiService().updateItem(
+        isLost: isLost,
+        itemId: widget.item.id,
+        fields: fields,
+        image: _selectedImage,
       );
-
-      request.headers['Authorization'] = 'Bearer $token';
-      request.fields['item_name'] = _itemNameController.text;
-      request.fields['category'] = _selectedCategory!;
-      request.fields['description'] = _descriptionController.text;
-      request.fields['color'] = _colorController.text;
-      request.fields['location'] = _locationController.text;
-      request.fields['date'] = _dateController.text;
-
-      // Only add image if a new one was selected
-      if (_selectedImage != null) {
-        final mediaType = _getMediaType(_selectedImage!.path);
-        request.files.add(
-          await http.MultipartFile.fromPath(
-            'item_img',
-            _selectedImage!.path,
-            contentType: mediaType,
-          ),
-        );
-      }
-
-      final streamedResponse = await request.send();
-      final response = await http.Response.fromStream(streamedResponse);
 
       if (mounted) {
         setState(() {
@@ -180,7 +143,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Post updated successfully!')),
           );
-          Navigator.pop(context, true); // Return true to indicate success
+          Navigator.pop(context, true);
         } else if (response.statusCode == 400) {
           final errorData = json.decode(response.body);
           String errorMessage = 'Validation error:\n';
@@ -217,7 +180,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Colors.grey[200],
+      backgroundColor: Colors.grey[50],
       appBar: AppBar(
         title: const Text('Edit Post', style: TextStyle(color: Colors.white)),
         backgroundColor: Colors.blueAccent,
@@ -234,7 +197,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      // Image Picker (moved to top)
                       GestureDetector(
                         onTap: _pickImage,
                         child: Container(
@@ -296,7 +258,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Item Name
                       const Text(
                         'Item Name',
                         style: TextStyle(
@@ -329,7 +290,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Category
                       const Text(
                         'Category',
                         style: TextStyle(
@@ -339,7 +299,7 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: _selectedCategory,
+                        initialValue: _selectedCategory,
                         decoration: InputDecoration(
                           hintText: 'Select category',
                           border: OutlineInputBorder(
@@ -371,49 +331,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Status Dropdown (moved after category)
-                      const Text(
-                        'Status',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      DropdownButtonFormField<String>(
-                        value: _selectedStatus,
-                        decoration: InputDecoration(
-                          hintText: 'Select status',
-                          border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 16,
-                            vertical: 12,
-                          ),
-                        ),
-                        items:
-                            _statuses.map((String status) {
-                              return DropdownMenuItem<String>(
-                                value: status,
-                                child: Text(status),
-                              );
-                            }).toList(),
-                        onChanged: (String? newValue) {
-                          setState(() {
-                            _selectedStatus = newValue;
-                          });
-                        },
-                        validator: (value) {
-                          if (value == null || value.isEmpty) {
-                            return 'Please select a status';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 20),
-
-                      // Description
                       const Text(
                         'Description',
                         style: TextStyle(
@@ -441,7 +358,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Color
                       const Text(
                         'Color',
                         style: TextStyle(
@@ -474,7 +390,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Location
                       const Text(
                         'Location',
                         style: TextStyle(
@@ -510,7 +425,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       const SizedBox(height: 20),
 
-                      // Date
                       const Text(
                         'Date',
                         style: TextStyle(
@@ -543,7 +457,6 @@ class _EditItemScreenState extends State<EditItemScreen> {
                       ),
                       const SizedBox(height: 30),
 
-                      // Submit Button
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 
@@ -15,41 +16,39 @@ class _SignUpScreenState extends State<SignUpScreen> {
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
+  bool _obscurePassword = true;
+  bool _obscureConfirmPassword = true;
+  bool _submitted = false;
 
   Future<void> _signUp() async {
+    setState(() => _submitted = true);
     if (_formKey.currentState!.validate()) {
       final authProvider = Provider.of<AuthProvider>(context, listen: false);
       final username = _usernameController.text.trim();
       final email = _emailController.text.trim();
       final password = _passwordController.text.trim();
 
-      await authProvider.signUp(email, password);
+      final success = await authProvider.sendOTP(email, username: username);
 
-      if (authProvider.errorMessage != null && mounted) {
-        ScaffoldMessenger.of(
+      if (success && mounted) {
+        Navigator.pushReplacementNamed(
           context,
-        ).showSnackBar(SnackBar(content: Text(authProvider.errorMessage!)));
+          '/verify-otp',
+          arguments: {
+            'email': email,
+            'password': password,
+            'username': username,
+          },
+        );
       } else if (mounted) {
-        // Send OTP via Django backend with username
-        final success = await authProvider.sendOTP(email, username: username);
-
-        if (success && mounted) {
-          // Navigate to OTP verification screen with email and Firebase UID
-          Navigator.pushReplacementNamed(
-            context,
-            '/verify-otp',
-            arguments: {
-              'email': email,
-              'firebaseUid': authProvider.currentUserUid,
-            },
-          );
-        } else if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Failed to send OTP. Please try again.'),
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              authProvider.errorMessage ??
+                  'Failed to send OTP. Please try again.',
             ),
-          );
-        }
+          ),
+        );
       }
     }
   }
@@ -66,12 +65,24 @@ class _SignUpScreenState extends State<SignUpScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Create Account')),
+      appBar: AppBar(
+        title: const Text('Create Account'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () {
+            Navigator.pushReplacementNamed(context, '/login');
+          },
+        ),
+      ),
       body: Center(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(32.0),
           child: Form(
             key: _formKey,
+            autovalidateMode:
+                _submitted
+                    ? AutovalidateMode.onUserInteraction
+                    : AutovalidateMode.disabled,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisAlignment: MainAxisAlignment.center,
@@ -92,6 +103,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     labelText: 'Username',
                     prefixIcon: Icon(Icons.person_rounded),
                   ),
+                  inputFormatters: [
+                    FilteringTextInputFormatter.deny(RegExp(r'\s')),
+                  ],
                   validator: (value) {
                     if (value == null || value.isEmpty) {
                       return 'Please enter a username';
@@ -99,8 +113,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     if (value.length < 3) {
                       return 'Username must be at least 3 characters';
                     }
+                    if (value.contains(' ')) {
+                      return 'Username cannot contain spaces';
+                    }
                     if (!RegExp(r'^[a-zA-Z0-9_]+$').hasMatch(value)) {
-                      return 'Username can only contain letters, numbers, and underscores';
+                      return 'Alphanumeric characters and underscores only';
                     }
                     return null;
                   },
@@ -122,10 +139,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _passwordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: _obscurePassword,
+                  decoration: InputDecoration(
                     labelText: 'Password',
-                    prefixIcon: Icon(Icons.lock_rounded),
+                    prefixIcon: const Icon(Icons.lock_rounded),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscurePassword
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscurePassword = !_obscurePassword;
+                        });
+                      },
+                    ),
                   ),
                   validator:
                       (value) =>
@@ -136,10 +166,23 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 const SizedBox(height: 20),
                 TextFormField(
                   controller: _confirmPasswordController,
-                  obscureText: true,
-                  decoration: const InputDecoration(
+                  obscureText: _obscureConfirmPassword,
+                  decoration: InputDecoration(
                     labelText: 'Confirm Password',
-                    prefixIcon: Icon(Icons.lock_reset),
+                    prefixIcon: const Icon(Icons.lock_reset),
+                    suffixIcon: IconButton(
+                      icon: Icon(
+                        _obscureConfirmPassword
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        color: Colors.grey,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          _obscureConfirmPassword = !_obscureConfirmPassword;
+                        });
+                      },
+                    ),
                   ),
                   validator: (value) {
                     if (value != _passwordController.text) {

@@ -8,7 +8,7 @@ django.setup()
 from core.models import UserProfile, FoundItem, LostItem
 
 def backfill_counts():
-    print("Starting backfill of user post counts...")
+    # print("Starting backfill of user post counts...")
     users = UserProfile.objects.all()
     count = 0
     for user in users:
@@ -19,10 +19,10 @@ def backfill_counts():
             user.found_count = found
             user.lost_count = lost
             user.save(update_fields=['found_count', 'lost_count'])
-            print(f"Updated {user.user_name}: Found={found}, Lost={lost}")
+            # print(f"Updated {user.user_name}: Found={found}, Lost={lost}")
             count += 1
             
-    print(f"Backfill complete. Updated {count} users.")
+    # print(f"Backfill complete. Updated {count} users.")
 
 if __name__ == "__main__":
     backfill_counts()

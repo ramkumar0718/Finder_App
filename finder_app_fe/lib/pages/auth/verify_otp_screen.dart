@@ -1,21 +1,27 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart' as fb_auth_lib;
-import 'package:http/http.dart' as http;
-import 'dart:convert';
-
-// Django API base URL
-const String _djangoApiBaseUrl = 'http://10.0.2.2:8000/api';
+import '../../providers/auth_provider.dart';
+import '../../services/api_service.dart';
 
 class VerifyOTPScreen extends StatefulWidget {
   final String email;
-  final String firebaseUid;
+  final String? password;
+  final String? username;
+  final String? firebaseUid;
+  final bool isEmailChange;
+  final String? newEmail;
 
   const VerifyOTPScreen({
     super.key,
     required this.email,
-    required this.firebaseUid,
+    this.password,
+    this.username,
+    this.firebaseUid,
+    this.isEmailChange = false,
+    this.newEmail,
   });
 
   @override
@@ -73,7 +79,6 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
   }
 
   Future<void> _verifyOTP() async {
-    // Get OTP code from controllers
     String otpCode = _otpControllers.map((c) => c.text).join();
 
     if (otpCode.length != 6) {
@@ -85,42 +90,102 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
 
     setState(() => _isVerifying = true);
 
-    try {
-      final response = await http.post(
-        Uri.parse('$_djangoApiBaseUrl/auth/verify-otp/'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': widget.email, 'otp_code': otpCode}),
+    Map<String, dynamic> result;
+    if (widget.isEmailChange) {
+      result = await ApiService().verifyEmailChangeOTP(
+        widget.newEmail!,
+        otpCode,
       );
+    } else {
+      result = await ApiService().verifyOTP(widget.email, otpCode);
+    }
 
-      if (mounted) {
-        setState(() => _isVerifying = false);
-      }
+    if (mounted) {
+      setState(() => _isVerifying = false);
+    }
 
-      if (response.statusCode == 200) {
-        // OTP verified successfully
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Email verified successfully!')),
-          );
-          Navigator.pushNamedAndRemoveUntil(context, '/home', (route) => false);
-        }
-      } else {
-        // Handle error
-        final errorData = jsonDecode(response.body);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(errorData['error'] ?? 'Verification failed'),
-            ),
-          );
+    if (result['success']) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Email verified successfully!')),
+        );
+        if (widget.isEmailChange) {
+          try {
+            await fb_auth_lib.FirebaseAuth.instance.currentUser?.reload();
+            await fb_auth_lib.FirebaseAuth.instance.currentUser?.getIdToken(
+              true,
+            );
+            Navigator.pop(context, true);
+          } on fb_auth_lib.FirebaseAuthException catch (e) {
+            print('[VerifyOTP] Auth error after email change: ${e.code}');
+            if (e.code == 'user-token-expired' || e.code == 'user-not-found') {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'Session expired. Please log in with your new email.',
+                    ),
+                    duration: Duration(seconds: 5),
+                  ),
+                );
+                await fb_auth_lib.FirebaseAuth.instance.signOut();
+                Navigator.pushNamedAndRemoveUntil(
+                  context,
+                  '/',
+                  (route) => false,
+                );
+              }
+            } else {
+              if (mounted) Navigator.pop(context, true);
+            }
+          } catch (e) {
+            if (mounted) Navigator.pop(context, true);
+          }
+        } else {
+          try {
+            if (widget.password != null) {
+              final authProvider = Provider.of<AuthProvider>(
+                context,
+                listen: false,
+              );
+              await authProvider.signUp(widget.email, widget.password!);
+
+              if (authProvider.errorMessage != null) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text(authProvider.errorMessage!)),
+                  );
+                }
+              } else {
+                if (mounted) {
+                  Navigator.pushNamedAndRemoveUntil(
+                    context,
+                    '/home',
+                    (route) => false,
+                  );
+                }
+              }
+            } else {
+              Navigator.pushNamedAndRemoveUntil(
+                context,
+                '/home',
+                (route) => false,
+              );
+            }
+          } catch (e) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(content: Text('Failed to finalize account: $e')),
+              );
+            }
+          }
         }
       }
-    } catch (e) {
+    } else {
       if (mounted) {
-        setState(() => _isVerifying = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Network error: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['error'] ?? 'Verification failed')),
+        );
       }
     }
   }
@@ -128,52 +193,30 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
   Future<void> _resendOTP() async {
     if (!_canResend) return;
 
-    try {
-      final response = await http.post(
-        Uri.parse('$_djangoApiBaseUrl/auth/resend-otp/'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'email': widget.email,
-          'firebase_uid': widget.firebaseUid,
-        }),
-      );
+    Map<String, dynamic> result;
+    if (widget.isEmailChange) {
+      result = await ApiService().requestEmailChangeOTP(widget.newEmail!);
+    } else {
+      result = await ApiService().resendOTP(widget.email);
+    }
 
-      if (response.statusCode == 200) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('New OTP sent to your email!')),
-          );
-          _startTimer();
-          // Clear OTP fields
-          for (var controller in _otpControllers) {
-            controller.clear();
-          }
-          _focusNodes[0].requestFocus();
-        }
-      } else if (response.statusCode == 429) {
-        // Rate limited
-        final errorData = jsonDecode(response.body);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                errorData['error'] ?? 'Please wait before resending',
-              ),
-            ),
-          );
-        }
-      } else {
-        if (mounted) {
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text('Failed to resend OTP')));
-        }
-      }
-    } catch (e) {
+    if (result['success']) {
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Network error: $e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('New OTP sent to your email!')),
+        );
+        _startTimer();
+
+        for (var controller in _otpControllers) {
+          controller.clear();
+        }
+        _focusNodes[0].requestFocus();
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(result['error'] ?? 'Failed to resend OTP')),
+        );
       }
     }
   }
@@ -183,7 +226,6 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
       _focusNodes[index + 1].requestFocus();
     }
 
-    // Auto-verify when all 6 digits are entered
     if (index == 5 && value.isNotEmpty) {
       bool allFilled = _otpControllers.every(
         (controller) => controller.text.isNotEmpty,
@@ -213,12 +255,12 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.white),
           onPressed: () {
-            _auth.signOut();
-            Navigator.pushNamedAndRemoveUntil(
-              context,
-              '/login',
-              (route) => false,
-            );
+            if (widget.isEmailChange) {
+              Navigator.pop(context);
+            } else {
+              _auth.signOut();
+              Navigator.pushNamedAndRemoveUntil(context, '/', (route) => false);
+            }
           },
         ),
       ),
@@ -233,7 +275,6 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Title
                 const Text(
                   'Verify Your Account',
                   style: TextStyle(
@@ -245,7 +286,6 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
                 ),
                 const SizedBox(height: 12),
 
-                // Subtitle
                 const Text(
                   'Enter the 6-Digit Verification Code',
                   style: TextStyle(
@@ -257,7 +297,6 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
                 ),
                 const SizedBox(height: 8),
 
-                // Email info
                 Text(
                   'The unique code was securely sent to your registered email address.',
                   style: const TextStyle(fontSize: 14, color: Colors.grey),
@@ -275,12 +314,11 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
                 ),
                 const SizedBox(height: 50),
 
-                // OTP Input Boxes
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: List.generate(6, (index) {
                     return Container(
-                      width: 45,
+                      width: 42,
                       height: 55,
                       margin: const EdgeInsets.symmetric(horizontal: 4),
                       child: RawKeyboardListener(
@@ -293,12 +331,13 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
                           keyboardType: TextInputType.number,
                           maxLength: 1,
                           style: const TextStyle(
-                            fontSize: 24,
+                            fontSize: 26,
                             fontWeight: FontWeight.bold,
                             color: Colors.blueAccent,
                           ),
                           decoration: InputDecoration(
                             counterText: '',
+                            contentPadding: EdgeInsets.zero,
                             enabledBorder: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                               borderSide: const BorderSide(
@@ -327,7 +366,6 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
                 ),
                 const SizedBox(height: 30),
 
-                // Resend Section
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -363,7 +401,6 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
                 ),
                 const SizedBox(height: 50),
 
-                // Verify Button
                 SizedBox(
                   width: double.infinity,
                   height: 56,
@@ -399,19 +436,22 @@ class _VerifyOTPScreenState extends State<VerifyOTPScreen> {
                 ),
                 const SizedBox(height: 20),
 
-                // Cancel/Logout option
                 TextButton(
                   onPressed: () {
-                    _auth.signOut();
-                    Navigator.pushNamedAndRemoveUntil(
-                      context,
-                      '/login',
-                      (route) => false,
-                    );
+                    if (widget.isEmailChange) {
+                      Navigator.pop(context);
+                    } else {
+                      _auth.signOut();
+                      Navigator.pushNamedAndRemoveUntil(
+                        context,
+                        '/',
+                        (route) => false,
+                      );
+                    }
                   },
-                  child: const Text(
-                    'Cancel / Go to Login',
-                    style: TextStyle(color: Colors.grey, fontSize: 14),
+                  child: Text(
+                    widget.isEmailChange ? 'Cancel' : 'Cancel / Go to Login',
+                    style: const TextStyle(color: Colors.grey, fontSize: 14),
                   ),
                 ),
               ],
