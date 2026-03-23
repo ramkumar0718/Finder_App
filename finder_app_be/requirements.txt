@@ -9,6 +9,7 @@ cloudinary==1.44.1
 cryptography==46.0.3
 dj-database-url==3.1.2
 Django==5.2.7
+django-anymail==14.0
 django-cloudinary-storage==0.3.0
 djangorestframework==3.16.1
 djangoviz==0.1.1
