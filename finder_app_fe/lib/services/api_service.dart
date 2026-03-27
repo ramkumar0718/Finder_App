@@ -17,19 +17,18 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal();
 
-  static String get baseDomain =>
-      dotenv.env['BASE_DOMAIN'] ?? 'No base url found';
-  // static const baseDomain = 'http://10.0.2.2:8000';
+  // static String get baseDomain => dotenv.env['BASE_DOMAIN'] ?? 'No base url found';
+  static const baseDomain = 'http://10.0.2.2:8000';
   static String get _baseUrl => '$baseDomain/api';
   final fb_auth_lib.FirebaseAuth _auth = fb_auth_lib.FirebaseAuth.instance;
 
   // --- Helper Methods ---
 
-  Future<String?> _getIdToken() async {
+  Future<String?> _getIdToken({bool forceRefresh = false}) async {
     final user = _auth.currentUser;
     if (user != null) {
       try {
-        return await user.getIdToken();
+        return await user.getIdToken(forceRefresh);
       } on fb_auth_lib.FirebaseAuthException catch (_) {
         return null;
       } catch (_) {
@@ -37,6 +36,20 @@ class ApiService {
       }
     }
     return null;
+  }
+
+  dynamic _safeJsonDecode(String body, {String? context}) {
+    try {
+      return jsonDecode(body);
+    } catch (e) {
+      print(
+        '[ApiService] JSON decode error${context != null ? ' in $context' : ''}: $e',
+      );
+      print(
+        '[ApiService] Response body starting with: ${body.length > 500 ? body.substring(0, 500) : body}',
+      );
+      throw FormatException('Invalid JSON response: $e');
+    }
   }
 
   Map<String, String> _jsonHeaders({String? token}) {
@@ -107,149 +120,12 @@ class ApiService {
     }
   }
 
-  // --- OTP Methods ---
-
-  Future<Map<String, dynamic>> sendOTP(String email, {String? username}) async {
-    final firebaseUid = fb_auth_lib.FirebaseAuth.instance.currentUser?.uid;
-
-    final body = {
-      'email': email,
-      if (firebaseUid != null) 'firebase_uid': firebaseUid,
-      if (username != null && username.isNotEmpty) 'user_name': username,
-    };
-
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/send-otp/'),
-        headers: _jsonHeaders(),
-        body: jsonEncode(body),
-      );
-
-      if (response.statusCode == 200) {
-        return {'success': true};
-      } else {
-        final errorData = jsonDecode(response.body);
-        return {
-          'success': false,
-          'error': errorData['error'] ?? 'Failed to send OTP',
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'error': 'Network error: $e'};
-    }
-  }
-
-  Future<Map<String, dynamic>> verifyOTP(String email, String otpCode) async {
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/verify-otp/'),
-        headers: _jsonHeaders(),
-        body: jsonEncode({'email': email, 'otp_code': otpCode}),
-      );
-
-      if (response.statusCode == 200) {
-        return {'success': true};
-      } else {
-        final errorData = jsonDecode(response.body);
-        return {
-          'success': false,
-          'error': errorData['error'] ?? 'Verification failed',
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'error': 'Network error: $e'};
-    }
-  }
-
-  Future<Map<String, dynamic>> resendOTP(String email) async {
-    final firebaseUid = fb_auth_lib.FirebaseAuth.instance.currentUser?.uid;
-
-    final body = {
-      'email': email,
-      if (firebaseUid != null) 'firebase_uid': firebaseUid,
-    };
-
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/resend-otp/'),
-        headers: _jsonHeaders(),
-        body: jsonEncode(body),
-      );
-
-      if (response.statusCode == 200) {
-        return {'success': true};
-      } else {
-        final errorData = jsonDecode(response.body);
-        return {
-          'success': false,
-          'error': errorData['error'] ?? 'Failed to resend OTP',
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'error': 'Network error: $e'};
-    }
-  }
-
-  Future<Map<String, dynamic>> requestEmailChangeOTP(String newEmail) async {
-    final token = await _getIdToken();
-    if (token == null) return {'success': false, 'error': 'Not authenticated'};
-
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/request-email-change-otp/'),
-        headers: _jsonHeaders(token: token),
-        body: jsonEncode({'new_email': newEmail}),
-      );
-
-      if (response.statusCode == 200) {
-        return {
-          'success': true,
-          'message': jsonDecode(response.body)['message'],
-        };
-      } else {
-        final errorData = jsonDecode(response.body);
-        return {
-          'success': false,
-          'error': errorData['error'] ?? 'Failed to request code',
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'error': 'Network error: $e'};
-    }
-  }
-
-  Future<Map<String, dynamic>> verifyEmailChangeOTP(
-    String newEmail,
-    String otpCode,
-  ) async {
-    final token = await _getIdToken();
-    if (token == null) return {'success': false, 'error': 'Not authenticated'};
-
-    try {
-      final response = await http.post(
-        Uri.parse('$_baseUrl/auth/verify-email-change-otp/'),
-        headers: _jsonHeaders(token: token),
-        body: jsonEncode({'new_email': newEmail, 'otp_code': otpCode}),
-      );
-
-      if (response.statusCode == 200) {
-        return {'success': true};
-      } else {
-        final errorData = jsonDecode(response.body);
-        return {
-          'success': false,
-          'error': errorData['error'] ?? 'Verification failed',
-        };
-      }
-    } catch (e) {
-      return {'success': false, 'error': 'Network error: $e'};
-    }
-  }
-
   // --- Profile Methods ---
 
-  Future<Map<String, dynamic>?> fetchUserProfile() async {
-    final token = await _getIdToken();
+  Future<Map<String, dynamic>?> fetchUserProfile({
+    bool forceRefresh = false,
+  }) async {
+    final token = await _getIdToken(forceRefresh: forceRefresh);
     if (token == null) return null;
 
     try {
@@ -259,14 +135,18 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = _safeJsonDecode(
+          response.body,
+          context: 'fetchUserProfile',
+        );
         // Store role locally for quick access
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('user_role', data['role'] ?? 'user');
-        return data;
+        return data as Map<String, dynamic>;
       }
       return null;
     } catch (e) {
+      print('[ApiService] fetchUserProfile error: $e');
       return null;
     }
   }
@@ -321,7 +201,10 @@ class ApiService {
       final responseBody = await http.Response.fromStream(response);
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(responseBody.body);
+        final data = _safeJsonDecode(
+          responseBody.body,
+          context: 'uploadProfilePicture',
+        );
         return {'success': true, 'data': data};
       } else {
         return {
@@ -340,10 +223,12 @@ class ApiService {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/found-items/'));
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        return _safeJsonDecode(response.body, context: 'fetchFoundItems')
+            as List<dynamic>;
       }
       return [];
-    } catch (_) {
+    } catch (e) {
+      print('[ApiService] fetchFoundItems error: $e');
       return [];
     }
   }
@@ -352,10 +237,12 @@ class ApiService {
     try {
       final response = await http.get(Uri.parse('$_baseUrl/lost-items/'));
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        return _safeJsonDecode(response.body, context: 'fetchLostItems')
+            as List<dynamic>;
       }
       return [];
-    } catch (_) {
+    } catch (e) {
+      print('[ApiService] fetchLostItems error: $e');
       return [];
     }
   }
@@ -438,7 +325,7 @@ class ApiService {
               : keyword;
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
+        final data = _safeJsonDecode(response.body, context: 'fetchColorInfo');
         if (data['status'] == 'success') {
           final hexValue = data['base']['hex']['value'] as String;
           // Store as 0XFF... per instructions
@@ -484,11 +371,15 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
+        final List<dynamic> data = _safeJsonDecode(
+          response.body,
+          context: 'fetchConversations',
+        );
         return data.map((e) => Conversation.fromJson(e)).toList();
       }
       return [];
-    } catch (_) {
+    } catch (e) {
+      print('[ApiService] fetchConversations error: $e');
       return [];
     }
   }
@@ -505,10 +396,13 @@ class ApiService {
       );
 
       if (response.statusCode == 200 || response.statusCode == 201) {
-        return Conversation.fromJson(jsonDecode(response.body));
+        return Conversation.fromJson(
+          _safeJsonDecode(response.body, context: 'createConversation'),
+        );
       }
       return null;
-    } catch (_) {
+    } catch (e) {
+      print('[ApiService] createConversation error: $e');
       return null;
     }
   }
@@ -524,11 +418,15 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        final List<dynamic> data = jsonDecode(response.body);
+        final List<dynamic> data = _safeJsonDecode(
+          response.body,
+          context: 'fetchMessages',
+        );
         return data.map((e) => Message.fromJson(e)).toList();
       }
       return [];
-    } catch (_) {
+    } catch (e) {
+      print('[ApiService] fetchMessages error: $e');
       return [];
     }
   }
@@ -722,10 +620,12 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        return _safeJsonDecode(response.body, context: 'fetchAdminUsers')
+            as Map<String, dynamic>;
       }
       return {'total_count': 0, 'users': []};
-    } catch (_) {
+    } catch (e) {
+      print('[ApiService] fetchAdminUsers error: $e');
       return {'total_count': 0, 'users': []};
     }
   }
@@ -756,10 +656,12 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        return _safeJsonDecode(response.body, context: 'fetchAdminUserProfile')
+            as Map<String, dynamic>;
       }
       return null;
-    } catch (_) {
+    } catch (e) {
+      print('[ApiService] fetchAdminUserProfile error: $e');
       return null;
     }
   }
@@ -786,10 +688,12 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        return jsonDecode(response.body);
+        return _safeJsonDecode(response.body, context: 'fetchAdminItems')
+            as Map<String, dynamic>;
       }
       return {'total_count': 0, 'items': []};
-    } catch (_) {
+    } catch (e) {
+      print('[ApiService] fetchAdminItems error: $e');
       return {'total_count': 0, 'items': []};
     }
   }
@@ -812,7 +716,9 @@ class ApiService {
       );
 
       if (response.statusCode == 200) {
-        return List<dynamic>.from(jsonDecode(response.body));
+        return List<dynamic>.from(
+          _safeJsonDecode(response.body, context: 'fetchAllUsersForAdmin'),
+        );
       } else {
         throw Exception(
           'Failed to load users: ${response.statusCode} - ${response.body}',
@@ -954,7 +860,8 @@ class ApiService {
     );
 
     if (response.statusCode == 200) {
-      return jsonDecode(response.body) as Map<String, dynamic>;
+      return _safeJsonDecode(response.body, context: 'fetchReviewForIssue')
+          as Map<String, dynamic>;
     }
     return null;
   }

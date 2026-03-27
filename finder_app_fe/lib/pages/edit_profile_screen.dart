@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import '../services/api_service.dart';
-import 'auth/verify_otp_screen.dart';
+import 'auth/verify_link_screen.dart';
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
@@ -12,7 +12,7 @@ class EditProfileScreen extends StatefulWidget {
 }
 
 class _EditProfileScreenState extends State<EditProfileScreen> {
-  final user = FirebaseAuth.instance.currentUser;
+  final user = fb_auth.FirebaseAuth.instance.currentUser;
   final _nameController = TextEditingController();
   final _emailController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
@@ -33,11 +33,11 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
     super.dispose();
   }
 
-  Future<void> _fetchProfileData() async {
+  Future<void> _fetchProfileData({bool forceRefresh = false}) async {
     setState(() => _isLoading = true);
 
     try {
-      final data = await ApiService().fetchUserProfile();
+      final data = await ApiService().fetchUserProfile(forceRefresh: forceRefresh);
 
       if (data != null && mounted) {
         setState(() {
@@ -95,7 +95,7 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text(
-                  'Enter your new email address. We will send an OTP to verify it.',
+                  'Enter your new email address. We will send an Link to verify it.',
                 ),
                 const SizedBox(height: 16),
                 TextField(
@@ -126,48 +126,114 @@ class _EditProfileScreenState extends State<EditProfileScreen> {
                   }
 
                   Navigator.pop(context);
-                  _requestEmailChangeOTP(newEmail);
+                  _requestEmailChange(newEmail);
                 },
-                child: const Text('Send OTP'),
+                child: const Text('Submit'),
               ),
             ],
           ),
     );
   }
 
-  Future<void> _requestEmailChangeOTP(String newEmail) async {
-    setState(() => _isSaving = true);
-    final result = await ApiService().requestEmailChangeOTP(newEmail);
-    setState(() => _isSaving = false);
+  Future<void> _requestEmailChange(String newEmail) async {
+    // Firebase requires recent authentication for sensitive operations.
+    // Prompt the user for their password to re-authenticate first.
+    final password = await _showPasswordConfirmDialog();
+    if (password == null || password.isEmpty) return; // user cancelled
 
-    if (result['success']) {
+    setState(() => _isSaving = true);
+    try {
+      // Step 1: Re-authenticate
+      final credential = fb_auth.EmailAuthProvider.credential(
+        email: user?.email ?? '',
+        password: password,
+      );
+      await user?.reauthenticateWithCredential(credential);
+
+      // Step 2: Send verification to the new email
+      await user?.verifyBeforeUpdateEmail(newEmail);
+
       if (mounted) {
+        setState(() => _isSaving = false);
         final success = await Navigator.push<bool>(
           context,
           MaterialPageRoute(
-            builder:
-                (context) => VerifyOTPScreen(
-                  email: user?.email ?? '',
-                  firebaseUid: user?.uid ?? '',
-                  isEmailChange: true,
-                  newEmail: newEmail,
-                ),
+            builder: (context) => VerifyLinkScreen(
+              email: user?.email ?? '',
+              isEmailChange: true,
+              newEmail: newEmail,
+            ),
           ),
         );
 
         if (success == true) {
           _emailChanged = true;
-          _fetchProfileData();
+          _fetchProfileData(forceRefresh: true);
         }
       }
-    } else {
+    } on fb_auth.FirebaseAuthException catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(result['error'] ?? 'Failed to request OTP')),
-        );
         setState(() => _isSaving = false);
+        String message = 'Failed to request email change.';
+        if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
+          message = 'Incorrect password. Please try again.';
+        } else if (e.code == 'too-many-requests') {
+          message = 'Too many attempts. Please try again later.';
+        }
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to request email change: $e')),
+        );
       }
     }
+  }
+
+  /// Shows a dialog asking user to confirm their current password.
+  Future<String?> _showPasswordConfirmDialog() {
+    final passwordController = TextEditingController();
+    bool obscure = true;
+
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Confirm Password'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('To change your email, please re-enter your current password.'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                obscureText: obscure,
+                decoration: InputDecoration(
+                  labelText: 'Current Password',
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                    icon: Icon(obscure ? Icons.visibility_off : Icons.visibility),
+                    onPressed: () => setDialogState(() => obscure = !obscure),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, passwordController.text),
+              child: const Text('Confirm'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override

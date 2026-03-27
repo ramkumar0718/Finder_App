@@ -80,29 +80,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
         from datetime import timedelta
         
         one_month_ago = timezone.now() - timedelta(days=30)
-        return "Active" if obj.last_opened >= one_month_ago else "Inactive"
-
-
-class SendOTPSerializer(serializers.Serializer):
-    email = serializers.EmailField(required=True)
-    firebase_uid = serializers.CharField(required=False, max_length=128, allow_blank=True)
-    user_name = serializers.CharField(required=False, max_length=50, allow_blank=True)
-    
-    def validate_email(self, value):
-        if not value:
-            raise serializers.ValidationError("Email is required.")
-        return value.lower()
-
-
-class VerifyOTPSerializer(serializers.Serializer):
-    email = serializers.EmailField(required=True)
-    otp_code = serializers.CharField(required=True, min_length=6, max_length=6)
-    
-    def validate_otp_code(self, value):
-        if not value.isdigit():
-            raise serializers.ValidationError("OTP must contain only digits.")
-        return value
-        
+        return "Active" if obj.last_opened >= one_month_ago else "Inactive"        
 
 class GoogleLoginSerializer(serializers.Serializer):
     email = serializers.EmailField(required=True)

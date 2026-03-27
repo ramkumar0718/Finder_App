@@ -28,7 +28,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     if (!isRefresh) setState(() => _isLoading = true);
 
     try {
-      final data = await ApiService().fetchUserProfile();
+      final data = await ApiService().fetchUserProfile(forceRefresh: isRefresh);
 
       if (data != null) {
         _profileData = data;

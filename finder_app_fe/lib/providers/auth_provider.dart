@@ -13,6 +13,8 @@ class AuthProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   String? get errorMessage => _errorMessage;
   String? get currentUserUid => _auth.currentUser?.uid;
+  User? get user => _auth.currentUser;
+
 
   void _setLoading(bool value) {
     _isLoading = value;
@@ -26,18 +28,26 @@ class AuthProvider extends ChangeNotifier {
 
   // --- Auth Methods ---
 
-  Future<void> signUp(String email, String password) async {
+  Future<void> signUp(String email, String password, {String? displayName}) async {
     _setLoading(true);
     _setError(null);
     try {
-      await _auth.createUserWithEmailAndPassword(
+      final userCredential = await _auth.createUserWithEmailAndPassword(
         email: email,
         password: password,
       );
+      
+      if (displayName != null && userCredential.user != null) {
+        await userCredential.user!.updateDisplayName(displayName);
+      }
+      
+      // Send verification email immediately
+      await userCredential.user?.sendEmailVerification();
+      
     } on FirebaseAuthException catch (e) {
       _setError(e.message);
-    } catch (_) {
-      _setError('An unexpected error occurred.');
+    } catch (e) {
+      _setError('An unexpected error occurred: $e');
     } finally {
       _setLoading(false);
     }
@@ -199,53 +209,40 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
-  // --- OTP Methods (Django Backend) ---
+  // --- Email Verification Methods ---
 
-  Future<bool> sendOTP(String email, {String? username}) async {
+  Future<void> sendEmailVerification() async {
     _setLoading(true);
     _setError(null);
-
-    final result = await ApiService().sendOTP(email, username: username);
-
-    _setLoading(false);
-
-    if (result['success']) {
-      return true;
-    } else {
-      _setError(result['error']);
-      return false;
+    try {
+      final user = _auth.currentUser;
+      if (user != null) {
+        await user.sendEmailVerification();
+      } else {
+        throw Exception('No user found');
+      }
+    } on FirebaseAuthException catch (e) {
+      _setError(e.message);
+    } catch (e) {
+      _setError('Failed to send verification email: $e');
+    } finally {
+      _setLoading(false);
     }
   }
 
-  Future<bool> verifyOTP(String email, String otpCode) async {
-    _setLoading(true);
+  Future<bool> checkEmailVerificationStatus() async {
     _setError(null);
-
-    final result = await ApiService().verifyOTP(email, otpCode);
-
-    _setLoading(false);
-
-    if (result['success']) {
-      return true;
-    } else {
-      _setError(result['error']);
+    try {
+      final user = _auth.currentUser;
+      if (user != null) {
+        await user.reload();
+        return _auth.currentUser?.emailVerified ?? false;
+      }
       return false;
-    }
-  }
-
-  Future<bool> resendOTP(String email) async {
-    _setLoading(true);
-    _setError(null);
-
-    final result = await ApiService().resendOTP(email);
-
-    _setLoading(false);
-
-    if (result['success']) {
-      return true;
-    } else {
-      _setError(result['error']);
+    } catch (e) {
+      _setError('Failed to check verification status: $e');
       return false;
     }
   }
 }
+

@@ -28,15 +28,14 @@ class _SignUpScreenState extends State<SignUpScreen> {
       final email = _emailController.text.trim();
       final password = _passwordController.text.trim();
 
-      final success = await authProvider.sendOTP(email, username: username);
+      await authProvider.signUp(email, password, displayName: username);
 
-      if (success && mounted) {
+      if (authProvider.errorMessage == null && mounted) {
         Navigator.pushReplacementNamed(
           context,
           '/verify-otp',
           arguments: {
             'email': email,
-            'password': password,
             'username': username,
           },
         );
@@ -45,7 +44,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
           SnackBar(
             content: Text(
               authProvider.errorMessage ??
-                  'Failed to send OTP. Please try again.',
+                  'Failed to create account. Please try again.',
             ),
           ),
         );

@@ -1,6 +1,6 @@
 ## Finder_App
 
-A simple web/mobile application for reporting and finding lost and found items. The app allows users to post item details and contact each other securely through a common platform.
+A mobile application for reporting and finding lost and found items. The app allows users to post item details and contact each other securely through a common platform.
 
 ---
 
@@ -12,6 +12,14 @@ A simple web/mobile application for reporting and finding lost and found items. 
 - View all lost and found items  
 - Search items by name or category  
 - Admin can manage and remove fake or duplicate posts  
+
+---
+
+### Move into the project folder
+
+```
+cd finder_app_be
+```
 
 ---
 

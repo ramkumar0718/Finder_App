@@ -9,7 +9,7 @@ import 'firebase_options.dart';
 
 import 'pages/auth/login_screen.dart';
 import 'pages/auth/signup_screen.dart';
-import 'pages/auth/verify_otp_screen.dart';
+import 'pages/auth/verify_link_screen.dart';
 import 'pages/auth/forgot_password_screen.dart';
 import 'pages/auth/change_password_screen.dart';
 
@@ -96,16 +96,15 @@ class MyApp extends StatelessWidget {
           final args = settings.arguments as Map<String, dynamic>?;
           return MaterialPageRoute(
             builder:
-                (context) => VerifyOTPScreen(
+                (context) => VerifyLinkScreen(
                   email: args?['email'] ?? '',
-                  password: args?['password'],
                   username: args?['username'],
-                  firebaseUid: args?['firebaseUid'] ?? '',
                   isEmailChange: args?['isEmailChange'] ?? false,
                   newEmail: args?['newEmail'],
                 ),
           );
         }
+
 
         final routes = <String, WidgetBuilder>{
           '/login': (context) => const LoginScreen(),

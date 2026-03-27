@@ -33,6 +33,7 @@ finder_app_be/.env
 finder_app_be/media/
 finder_app_be/firebase-adminsdk-key.json
 finder_app_be/.pytest_cache/
+finder_app_be/staticfiles/
 
 # Frontend (Flutter)
 finder_app_fe/.dart_tool/

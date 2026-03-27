@@ -123,32 +123,6 @@ class UserProfile(models.Model):
     def __str__(self):
         return self.user_name or self.name or self.firebase_uid
 
-
-class EmailOTP(models.Model):
-    user = models.ForeignKey(UserProfile, on_delete=models.CASCADE, related_name='otp_codes', null=True, blank=True)
-    email = models.EmailField()
-    otp_code = models.CharField(max_length=6)
-    user_name = models.CharField(max_length=50, null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
-    is_verified = models.BooleanField(default=False)
-    attempts = models.IntegerField(default=0)
-    
-    class Meta:
-        ordering = ['-created_at']
-    
-    def save(self, *args, **kwargs):
-        if not self.expires_at:
-            self.expires_at = timezone.now() + timedelta(minutes=5)
-        super().save(*args, **kwargs)
-    
-    def is_expired(self):
-        return timezone.now() > self.expires_at
-    
-    def __str__(self):
-        return f"OTP for {self.email} - {self.otp_code}"
-
-
 class FoundItem(models.Model):
     CATEGORY_CHOICES = [
         ('Electronics', 'Electronics'),

@@ -4,8 +4,6 @@ from .models import FoundItem, LostItem, UserProfile, ReportIssue
 from firebase_admin import auth
 import cloudinary.uploader
 
-# Found Item Signals
-
 @receiver(post_save, sender=FoundItem)
 def update_found_count_on_save(sender, instance, created, **kwargs):
     """
@@ -31,9 +29,6 @@ def update_found_count_on_delete(sender, instance, **kwargs):
             cloudinary.uploader.destroy(instance.item_img.name)
         except Exception:
             pass
-
-
-# Lost Item Signals
 
 @receiver(post_save, sender=LostItem)
 def update_lost_count_on_save(sender, instance, created, **kwargs):

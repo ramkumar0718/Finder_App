@@ -11,18 +11,26 @@ from django.db import models
 from datetime import timedelta
 from django.shortcuts import get_object_or_404
 from .firebase_utils import cleanup_orphaned_firebase_users
-from .models import UserProfile, EmailOTP, FoundItem, LostItem, OwnershipRequest, ReportIssue
+from .models import UserProfile, FoundItem, LostItem, OwnershipRequest, ReportIssue
 from .serializers import (
-    UserProfileSerializer, SendOTPSerializer, VerifyOTPSerializer, 
+    UserProfileSerializer, 
     GoogleLoginSerializer, FoundItemSerializer, LostItemSerializer,
     OwnershipRequestSerializer, UserLostItemsSerializer, AdminUserSerializer,
     ReportIssueSerializer
 )
-from .utils import generate_otp, send_otp_email
 
 class MyApiView(APIView):
+    permission_classes = [AllowAny]
+
     def get(self, request):
         return Response({"message": "Hello World!"})
+
+class HealthCheckView(APIView):
+    authentication_classes = []
+    permission_classes = []
+
+    def get(self, request):
+        return Response({"status": "ok"})
 
 class UserProfileView(APIView):
     """
@@ -147,336 +155,6 @@ class GoogleLoginView(APIView):
                 {'error': f'Failed to sync user: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
-# OTP Views
-
-class SendOTPView(APIView):
-    """
-    Send OTP code to user's email.
-    This endpoint does not require authentication (used during signup).
-    """
-    permission_classes = [AllowAny]
-    
-    def post(self, request):
-        serializer = SendOTPSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        email = serializer.validated_data['email']
-        firebase_uid = serializer.validated_data.get('firebase_uid')
-        user_name = serializer.validated_data.get('user_name', '')
-        
-        # Sanitize incoming user_name: remove non-alphanumeric (except underscores)
-        import re
-        if user_name:
-            user_name = re.sub(r'[^a-zA-Z0-9_]', '', user_name.replace(' ', ''))
-            user_name = user_name[:50]
-        
-        # Get or create user profile if firebase_uid is provided
-        user_profile = None
-        if firebase_uid:
-            try:
-                user_profile, created = UserProfile.objects.get_or_create(
-                    firebase_uid=firebase_uid,
-                    defaults={
-                        'name': email.split('@')[0],
-                        'user_name': user_name if user_name else email.split('@')[0],
-                        'email': email
-                    }
-                )
-                
-                if not created and user_name and not user_profile.user_name:
-                    user_profile.user_name = user_name
-                    user_profile.save()
-                    
-            except Exception as e:
-                return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-            
-        recent_otp_record = EmailOTP.objects.filter(
-            email=email,
-            created_at__gte=timezone.now() - timedelta(seconds=60)
-        )
-        if user_profile:
-            recent_otp_record = recent_otp_record.filter(user=user_profile)
-        
-        recent_otp = recent_otp_record.first()
-        
-        if recent_otp:
-            time_remaining = 60 - (timezone.now() - recent_otp.created_at).seconds
-            return Response(
-                {'error': f'Please wait {time_remaining} seconds before requesting a new code.'},
-                status=status.HTTP_429_TOO_MANY_REQUESTS
-            )
-        
-        otp_code = generate_otp()
-        EmailOTP.objects.create(
-            user=user_profile,
-            email=email,
-            otp_code=otp_code,
-            user_name=user_name
-        )
-        
-        recipient_name = user_profile.name if user_profile else (user_name if user_name else email.split('@')[0])
-        email_sent = send_otp_email(email, otp_code, recipient_name)
-        
-        if email_sent:
-            return Response(
-                {'message': 'OTP sent successfully to your email.'},
-                status=status.HTTP_200_OK
-            )
-        else:
-            return Response(
-                {'error': 'Failed to send OTP email. Please try again.'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-class VerifyOTPView(APIView):
-    """
-    Verify OTP code submitted by user.
-    This endpoint does not require authentication (used during signup).
-    """
-    permission_classes = [AllowAny]
-    
-    def post(self, request):
-        serializer = VerifyOTPSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        email = serializer.validated_data['email']
-        otp_code = serializer.validated_data['otp_code']
-        
-        try:
-            otp_record = EmailOTP.objects.filter(
-                email=email,
-                is_verified=False
-            ).order_by('-created_at').first()
-        except Exception:
-            return Response(
-                {'error': 'Invalid request.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if not otp_record:
-            return Response(
-                {'error': 'No OTP found for this email. Please request a new code.'},
-                status=status.HTTP_404_NOT_FOUND
-            )
-        
-        if otp_record.is_expired():
-            return Response(
-                {'error': 'OTP has expired. Please request a new code.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if otp_record.attempts >= 3:
-            return Response(
-                {'error': 'Maximum verification attempts exceeded. Please request a new code.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if otp_record.otp_code == otp_code:
-            otp_record.is_verified = True
-            otp_record.save()
-            
-            user_profile = otp_record.user
-            if user_profile:
-                user_profile.is_email_verified = True
-                user_profile.save()
-            
-            return Response(
-                {'message': 'Email verified successfully!'},
-                status=status.HTTP_200_OK
-            )
-        else:
-            otp_record.attempts += 1
-            otp_record.save()
-            
-            remaining_attempts = 3 - otp_record.attempts
-            return Response(
-                {'error': f'Invalid OTP code. {remaining_attempts} attempts remaining.'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-
-class ResendOTPView(APIView):
-    """
-    Resend OTP code to user's email.
-    This endpoint does not require authentication (used during signup).
-    """
-    permission_classes = [AllowAny]
-    
-    def post(self, request):
-        serializer = SendOTPSerializer(data=request.data)
-        if not serializer.is_valid():
-            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
-        
-        email = serializer.validated_data['email']
-        firebase_uid = serializer.validated_data.get('firebase_uid')
-        user_name = serializer.validated_data.get('user_name', '')
-        
-        import re
-        if user_name:
-            user_name = re.sub(r'[^a-zA-Z0-9_]', '', user_name.replace(' ', ''))
-            user_name = user_name[:50]
-        
-        user_profile = None
-        if firebase_uid:
-            try:
-                user_profile = UserProfile.objects.get(firebase_uid=firebase_uid)
-            except UserProfile.DoesNotExist:
-                return Response(
-                    {'error': 'User not found.'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
-        
-        prev_otps = EmailOTP.objects.filter(email=email, is_verified=False)
-        if user_profile:
-            prev_otps = prev_otps.filter(user=user_profile)
-        prev_otps.update(is_verified=True)
-        
-        otp_code = generate_otp()
-        EmailOTP.objects.create(
-            user=user_profile,
-            email=email,
-            otp_code=otp_code,
-            user_name=user_name
-        )
-        
-        recipient_name = user_profile.name if user_profile else (user_name if user_name else email.split('@')[0])
-        email_sent = send_otp_email(email, otp_code, recipient_name)
-        
-        if email_sent:
-            return Response(
-                {'message': 'New OTP sent successfully to your email.'},
-                status=status.HTTP_200_OK
-            )
-        else:
-            return Response(
-                {'error': 'Failed to send OTP email. Please try again.'},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-class RequestEmailChangeOTPView(APIView):
-    """
-    Send OTP code to user's NEW email for change.
-    Requires authentication.
-    """
-    permission_classes = [IsAuthenticated]
-    
-    def post(self, request):
-        new_email = request.data.get('new_email', '').lower()
-        if not new_email:
-            return Response({'error': 'New email is required.'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Validate email format
-        import re
-        if not re.match(r"[^@]+@[^@]+\.[^@]+", new_email):
-            return Response({'error': 'Invalid email format.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Check if new email is already in use in local database
-        if UserProfile.objects.filter(email=new_email).exists():
-             return Response({'error': 'This email is already registered with another account.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Generate and save OTP
-        otp_code = generate_otp()
-        EmailOTP.objects.create(
-            user=request.user,
-            email=new_email,
-            otp_code=otp_code
-        )
-        
-        # Send OTP email
-        email_sent = send_otp_email(new_email, otp_code, request.user.name)
-        
-        if email_sent:
-            return Response(
-                {'message': f'OTP sent successfully to {new_email}.'}, 
-                status=status.HTTP_200_OK
-            )
-        else:
-            return Response(
-                {'error': 'Failed to send OTP email. Please try again later.'}, 
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-
-
-class VerifyEmailChangeOTPView(APIView):
-    """
-    Verify OTP for email change and update Firebase & local profile.
-    Requires authentication.
-    """
-    permission_classes = [IsAuthenticated]
-    
-    def post(self, request):
-        new_email = request.data.get('new_email', '').lower()
-        otp_code = request.data.get('otp_code', '')
-        
-        if not new_email or not otp_code:
-            return Response({'error': 'New email and OTP code are required.'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Find the most recent OTP for this email and current authenticated user
-        otp_record = EmailOTP.objects.filter(
-            user=request.user,
-            email=new_email,
-            is_verified=False
-        ).order_by('-created_at').first()
-        
-        if not otp_record:
-            return Response(
-                {'error': 'No pending OTP verification found for this email. Please request a new code.'}, 
-                status=status.HTTP_404_NOT_FOUND
-            )
-            
-        # Check if OTP is expired
-        if otp_record.is_expired():
-            return Response({'error': 'OTP has expired. Please request a new code.'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Check attempts
-        if otp_record.attempts >= 3:
-            return Response({'error': 'Too many failed attempts. Please request a new code.'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Verify OTP
-        if otp_record.otp_code != otp_code:
-            otp_record.attempts += 1
-            otp_record.save()
-            remaining = 3 - otp_record.attempts
-            return Response({'error': f'Invalid code. {remaining} attempts remaining.'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # OTP is valid. Now update Firebase Auth and local profile.
-        from firebase_admin import auth as firebase_auth
-        try:
-            # Update Firebase Auth email
-            firebase_auth.update_user(
-                request.user.firebase_uid,
-                email=new_email,
-                email_verified=True
-            )
-            
-            # Mark OTP as verified
-            otp_record.is_verified = True
-            otp_record.save()
-            
-            # Update local profile
-            user_profile = request.user
-            user_profile.email = new_email
-            user_profile.is_email_verified = True
-            user_profile.save()
-            
-            return Response(
-                {'message': 'Email updated successfully!', 'email': new_email}, 
-                status=status.HTTP_200_OK
-            )
-        except firebase_auth.EmailAlreadyExistsError:
-            return Response({'error': 'This email is already in use in Firebase.'}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            print(f"[EmailChange] Error updating Firebase: {str(e)}")
-            return Response({'error': f'Internal server error while updating email.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-
-
 
 class FoundItemCreateView(APIView):
     """
@@ -642,9 +320,6 @@ class LostItemListView(APIView):
                 {'error': 'Internal server error'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
-
-
-# Update and Delete Views for Found and Lost Items
 
 class FoundItemUpdateView(APIView):
     """

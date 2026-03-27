@@ -26,11 +26,21 @@ class _LoginScreenState extends State<LoginScreen> {
         _passwordController.text.trim(),
       );
 
-      if (authProvider.errorMessage != null && mounted) {
+      if (authProvider.errorMessage == null && mounted) {
+        final user = authProvider.user;
+        if (user != null && !user.emailVerified) {
+          Navigator.pushReplacementNamed(
+            context,
+            '/verify-otp',
+            arguments: {'email': user.email ?? ''},
+          );
+        }
+      } else if (authProvider.errorMessage != null && mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(authProvider.errorMessage!)));
       }
+
     }
   }
 
