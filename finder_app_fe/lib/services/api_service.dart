@@ -17,8 +17,9 @@ class ApiService {
   factory ApiService() => _instance;
   ApiService._internal();
 
-  // static String get baseDomain => dotenv.env['BASE_DOMAIN'] ?? 'No base url found';
-  static const baseDomain = 'http://10.0.2.2:8000';
+  static String get baseDomain =>
+      dotenv.env['BASE_DOMAIN'] ?? 'No base url found';
+  // static const baseDomain = 'http://10.0.2.2:8000';
   static String get _baseUrl => '$baseDomain/api';
   final fb_auth_lib.FirebaseAuth _auth = fb_auth_lib.FirebaseAuth.instance;
 
